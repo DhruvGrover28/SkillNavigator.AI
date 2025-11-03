@@ -10,14 +10,13 @@ __pycache__/
 
 # Virtual environment
 venv/
-.venv/
 env/
 ENV/
 
-# Database files (commented out to include sample data for deployment)
-# *.db
-# *.sqlite
-# *.sqlite3
+# Database files (optional - remove if you want to share sample data)
+*.db
+*.sqlite
+*.sqlite3
 
 # Logs
 *.log
@@ -36,23 +35,9 @@ Thumbs.db
 # Playwright browsers (will be downloaded by recipient)
 /ms-playwright/
 
-# Node modules
+# Node modules (if any)
 node_modules/
-
-# Frontend build files (commented out to allow deployment)
-# frontend/dist/
-frontend/.vite/
 
 # Temporary files
 temp/
 tmp/
-
-# Test files
-*test*.html
-*test*.js
-test_*
-
-# Backup files
-*_backup.*
-*_old.*
-*_new.*

@@ -70,6 +70,22 @@ class User(Base):
     def set_preferences(self, preferences: dict):
         """Set preferences from dict"""
         self.preferences = json.dumps(preferences)
+    
+    @property
+    def first_name(self):
+        """Backward compatibility property for first_name access"""
+        # If someone tries to access first_name, return the first part of name
+        if self.name:
+            return self.name.split()[0]
+        return ""
+    
+    @property  
+    def last_name(self):
+        """Backward compatibility property for last_name access"""
+        # If someone tries to access last_name, return the last part of name
+        if self.name and len(self.name.split()) > 1:
+            return " ".join(self.name.split()[1:])
+        return ""
 
 
 class Job(Base):
@@ -96,6 +112,12 @@ class Job(Base):
     # AI scoring
     relevance_score = Column(Float, nullable=True)
     skills_match = Column(Text, nullable=True)  # JSON string of matched skills
+    
+    # Enhanced AI scoring from JobScoringAgent
+    match_score = Column(Float, nullable=True)  # 0-100 scale
+    classification = Column(String, nullable=True)  # Excellent/Good/Fair/Poor Fit
+    score_breakdown = Column(Text, nullable=True)  # JSON: skills, experience, education scores
+    score_explanation = Column(Text, nullable=True)  # Human-readable explanation
     
     # Relationships
     applications = relationship("JobApplication", back_populates="job")
@@ -175,6 +197,64 @@ class SystemLog(Base):
     def set_metadata(self, metadata: dict):
         """Set metadata from dict"""
         self.metadata_json = json.dumps(metadata)
+
+
+class AutoApplySettings(Base):
+    """Auto-apply preferences and settings per user"""
+    __tablename__ = "auto_apply_settings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    
+    # Auto-apply configuration
+    enabled = Column(Boolean, default=False)
+    min_match_score = Column(Float, default=80.0)  # Minimum match score threshold
+    max_applications_per_day = Column(Integer, default=10)
+    
+    # Method preferences (JSON string with method priorities)
+    preferred_methods = Column(Text, nullable=True)  # JSON: ['email', 'http_form', 'form']
+    excluded_methods = Column(Text, nullable=True)   # JSON: ['linkedin'] if user doesn't want LinkedIn
+    
+    # Timing settings
+    auto_apply_times = Column(Text, nullable=True)   # JSON: ['09:00', '14:00'] for preferred times
+    delay_between_applications = Column(Integer, default=60)  # seconds
+    
+    # Content customization
+    cover_letter_template = Column(Text, nullable=True)
+    custom_signature = Column(Text, nullable=True)
+    
+    # Company and job filtering
+    excluded_companies = Column(Text, nullable=True)  # JSON: ['company1', 'company2']
+    required_keywords = Column(Text, nullable=True)   # JSON: ['remote', 'python']
+    excluded_keywords = Column(Text, nullable=True)   # JSON: ['senior', 'lead']
+    
+    # Status tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_run = Column(DateTime, nullable=True)
+    
+    # Relationships
+    user = relationship("User", backref="auto_apply_settings")
+    
+    def get_preferred_methods(self) -> List[str]:
+        """Get preferred methods as list"""
+        if self.preferred_methods:
+            return json.loads(self.preferred_methods)
+        return ['email', 'http_form', 'form']
+    
+    def set_preferred_methods(self, methods: List[str]):
+        """Set preferred methods from list"""
+        self.preferred_methods = json.dumps(methods)
+    
+    def get_excluded_companies(self) -> List[str]:
+        """Get excluded companies as list"""
+        if self.excluded_companies:
+            return json.loads(self.excluded_companies)
+        return []
+    
+    def set_excluded_companies(self, companies: List[str]):
+        """Set excluded companies from list"""
+        self.excluded_companies = json.dumps(companies)
 
 
 class Database:

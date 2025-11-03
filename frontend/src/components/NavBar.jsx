@@ -1,24 +1,40 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { 
-  Home, 
-  BarChart3, 
-  Settings, 
-  Search, 
-  User,
-  Bell,
-  Menu
-} from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Search, Bell } from 'lucide-react';
 
-const NavBar = () => {
+const NavBar = ({ setIsAuthenticated }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+  const [isProfileOpen, setIsProfileOpen] = React.useState(false);
+
+  // Close dropdowns when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.profile-dropdown')) {
+        setIsProfileOpen(false);
+      }
+      if (!event.target.closest('.mobile-menu') && !event.target.closest('.mobile-menu-button')) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
 
   const navigation = [
-    { name: 'Home', href: '/', icon: Home },
-    { name: 'Dashboard', href: '/dashboard', icon: BarChart3 },
-    { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Jobs', href: '/jobs' },
+    { name: 'Applications', href: '/applications' },
   ];
+
+  const handleLogout = () => {
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('user');
+    setIsAuthenticated(false);
+    navigate('/login');
+  };
 
   const isActive = (href) => {
     return location.pathname === href;
@@ -39,7 +55,6 @@ const NavBar = () => {
             {/* Desktop navigation */}
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
               {navigation.map((item) => {
-                const Icon = item.icon;
                 return (
                   <Link
                     key={item.name}
@@ -50,7 +65,6 @@ const NavBar = () => {
                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                     } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors duration-200`}
                   >
-                    <Icon className="w-4 h-4 mr-2" />
                     {item.name}
                   </Link>
                 );
@@ -72,10 +86,38 @@ const NavBar = () => {
             </button>
             
             {/* Profile dropdown */}
-            <div className="relative">
-              <button className="flex items-center p-2 text-gray-400 hover:text-gray-500 transition-colors duration-200">
-                <User className="w-5 h-5" />
+            <div className="relative profile-dropdown">
+              <button 
+                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                className="flex items-center p-2 text-gray-400 hover:text-gray-500 transition-colors duration-200"
+              >
+                Profile
               </button>
+              
+              {isProfileOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 ring-1 ring-black ring-opacity-5">
+                  <Link
+                    to="/preferences"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-200"
+                  >
+                    Preferences
+                  </Link>
+                  <Link
+                    to="/auto-apply"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-200"
+                  >
+                    Auto-Apply Settings
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors duration-200"
+                  >
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -83,9 +125,9 @@ const NavBar = () => {
           <div className="sm:hidden flex items-center">
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="p-2 text-gray-400 hover:text-gray-500 transition-colors duration-200"
+              className="mobile-menu-button p-2 text-gray-400 hover:text-gray-500 transition-colors duration-200"
             >
-              <Menu className="w-6 h-6" />
+              Menu
             </button>
           </div>
         </div>
@@ -93,10 +135,9 @@ const NavBar = () => {
 
       {/* Mobile menu */}
       {isMobileMenuOpen && (
-        <div className="sm:hidden">
+        <div className="sm:hidden mobile-menu">
           <div className="pt-2 pb-3 space-y-1">
             {navigation.map((item) => {
-              const Icon = item.icon;
               return (
                 <Link
                   key={item.name}
@@ -108,10 +149,7 @@ const NavBar = () => {
                       : 'border-transparent text-gray-600 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-800'
                   } block pl-3 pr-4 py-2 border-l-4 text-base font-medium transition-colors duration-200`}
                 >
-                  <div className="flex items-center">
-                    <Icon className="w-4 h-4 mr-3" />
-                    {item.name}
-                  </div>
+                  {item.name}
                 </Link>
               );
             })}
@@ -120,11 +158,26 @@ const NavBar = () => {
           {/* Mobile secondary menu */}
           <div className="pt-4 pb-3 border-t border-gray-200">
             <div className="flex items-center px-4">
-              <User className="w-8 h-8 text-gray-400" />
+              <div className="w-8 h-8 bg-gray-300 rounded-full"></div>
               <div className="ml-3">
                 <div className="text-base font-medium text-gray-800">User Profile</div>
                 <div className="text-sm text-gray-500">user@example.com</div>
               </div>
+            </div>
+            <div className="mt-3 space-y-1">
+              <Link
+                to="/preferences"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="flex items-center px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors duration-200"
+              >
+                Preferences
+              </Link>
+              <button
+                onClick={handleLogout}
+                className="flex items-center w-full px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors duration-200"
+              >
+                Logout
+              </button>
             </div>
           </div>
         </div>

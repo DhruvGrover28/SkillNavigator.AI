@@ -8,11 +8,12 @@ import {
   AlertTriangle,
   PieChart,
   Calendar,
-  Download
+  Download,
+  Play,
+  RefreshCw
 } from 'lucide-react';
 import TrackerTable from '../components/TrackerTable';
 import LoadingSpinner from '../components/LoadingSpinner';
-import axios from 'axios';
 
 const Dashboard = () => {
   const [applications, setApplications] = useState([]);
@@ -24,91 +25,166 @@ const Dashboard = () => {
     fetchDashboardData();
   }, [timeRange]);
 
+  // Helper function for authenticated API calls
+  const authenticatedFetch = (url, options = {}) => {
+    const token = localStorage.getItem('authToken');
+    const headers = {
+      ...options.headers,
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
+    
+    return fetch(`http://localhost:8000${url}`, {
+      ...options,
+      headers
+    });
+  };
+
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
       
-      // Try to fetch job stats (this endpoint works), but use fallback if it fails
-      let totalJobs = 150; // Default fallback
-      try {
-        const statsRes = await axios.get('/api/jobs/stats/summary');
-        totalJobs = statsRes.data.total_jobs || 150;
-      } catch (error) {
-        console.log('Using fallback job count:', totalJobs);
+      // Fetch real applications data from tracker API
+      const applicationsResponse = await authenticatedFetch(`/api/tracker/applications?days=${timeRange}`);
+      let applicationsData = [];
+      
+      if (applicationsResponse.ok) {
+        applicationsData = await applicationsResponse.json();
+        setApplications(applicationsData);
+      } else {
+        console.error('Failed to fetch applications');
+        setApplications([]);
       }
       
-      // Use realistic mock application data (no API calls needed)
-      const mockApplications = [
-        { id: 1, status: 'applied', applied_at: '2025-07-15T10:00:00Z', job_title: 'Software Engineer', company: 'Google' },
-        { id: 2, status: 'applied', applied_at: '2025-07-18T14:30:00Z', job_title: 'Frontend Developer', company: 'Meta' },
-        { id: 3, status: 'applied', applied_at: '2025-07-20T09:15:00Z', job_title: 'Backend Developer', company: 'Amazon' },
-        { id: 4, status: 'applied', applied_at: '2025-07-22T16:45:00Z', job_title: 'Full Stack Developer', company: 'Microsoft' },
-        { id: 5, status: 'applied', applied_at: '2025-07-25T11:20:00Z', job_title: 'DevOps Engineer', company: 'Netflix' },
-        { id: 6, status: 'applied', applied_at: '2025-07-28T13:10:00Z', job_title: 'Data Scientist', company: 'Tesla' },
-        { id: 7, status: 'applied', applied_at: '2025-07-30T08:30:00Z', job_title: 'Mobile Developer', company: 'Apple' },
-        { id: 8, status: 'applied', applied_at: '2025-08-01T15:00:00Z', job_title: 'AI Engineer', company: 'OpenAI' },
-        { id: 9, status: 'interview', applied_at: '2025-07-12T10:00:00Z', job_title: 'Senior Engineer', company: 'Airbnb' },
-        { id: 10, status: 'interview', applied_at: '2025-07-14T14:00:00Z', job_title: 'Product Manager', company: 'Uber' },
-        { id: 11, status: 'interview', applied_at: '2025-07-16T16:30:00Z', job_title: 'Cloud Engineer', company: 'Spotify' },
-        { id: 12, status: 'interview', applied_at: '2025-07-19T09:45:00Z', job_title: 'ML Engineer', company: 'Stripe' },
-        { id: 13, status: 'interview', applied_at: '2025-07-21T11:15:00Z', job_title: 'Security Engineer', company: 'Slack' },
-        { id: 14, status: 'interview', applied_at: '2025-07-24T14:20:00Z', job_title: 'Platform Engineer', company: 'Zoom' },
-        { id: 15, status: 'rejected', applied_at: '2025-07-08T10:00:00Z', job_title: 'Junior Developer', company: 'Shopify' },
-        { id: 16, status: 'rejected', applied_at: '2025-07-10T12:00:00Z', job_title: 'QA Engineer', company: 'Square' },
-        { id: 17, status: 'rejected', applied_at: '2025-07-13T15:30:00Z', job_title: 'Test Engineer', company: 'PayPal' },
-        { id: 18, status: 'rejected', applied_at: '2025-07-17T09:00:00Z', job_title: 'Support Engineer', company: 'Adobe' },
-        { id: 19, status: 'rejected', applied_at: '2025-07-23T13:45:00Z', job_title: 'Systems Admin', company: 'Salesforce' },
-        { id: 20, status: 'rejected', applied_at: '2025-07-26T16:00:00Z', job_title: 'Network Engineer', company: 'Oracle' },
-        { id: 21, status: 'rejected', applied_at: '2025-07-29T10:30:00Z', job_title: 'Database Admin', company: 'IBM' },
-        { id: 22, status: 'rejected', applied_at: '2025-07-31T12:15:00Z', job_title: 'Hardware Engineer', company: 'Intel' },
-        { id: 23, status: 'accepted', applied_at: '2025-07-05T09:00:00Z', job_title: 'Senior Developer', company: 'GitHub' },
-        { id: 24, status: 'accepted', applied_at: '2025-07-11T14:30:00Z', job_title: 'Tech Lead', company: 'Docker' },
-        { id: 25, status: 'pending', applied_at: '2025-07-27T11:00:00Z', job_title: 'Solutions Architect', company: 'Kubernetes Inc' },
-        { id: 26, status: 'pending', applied_at: '2025-07-29T15:45:00Z', job_title: 'Principal Engineer', company: 'Databricks' },
-        { id: 27, status: 'pending', applied_at: '2025-08-01T09:30:00Z', job_title: 'Staff Engineer', company: 'Snowflake' },
-        { id: 28, status: 'pending', applied_at: '2025-08-01T16:20:00Z', job_title: 'Architect', company: 'Palantir' }
-      ];
+      // Fetch real statistics from tracker API
+      const statsResponse = await authenticatedFetch(`/api/tracker/applications/stats?days=${timeRange}`);
+      let statsData = {
+        total_applications: 0,
+        applications_this_week: 0,
+        response_rate: 0,
+        interview_rate: 0,
+        success_rate: 0,
+        status_breakdown: {}
+      };
       
-      setApplications(mockApplications);
+      if (statsResponse.ok) {
+        statsData = await statsResponse.json();
+      } else {
+        console.error('Failed to fetch statistics');
+      }
       
-      // Calculate realistic stats from mock data
-      const totalApplications = mockApplications.length;
-      const appliedCount = mockApplications.filter(app => app.status === 'applied').length;
-      const pendingCount = mockApplications.filter(app => app.status === 'pending').length;
-      const interviewCount = mockApplications.filter(app => app.status === 'interview').length;
-      const acceptedCount = mockApplications.filter(app => app.status === 'accepted').length;
-      const rejectedCount = mockApplications.filter(app => app.status === 'rejected').length;
+      // Fetch job count
+      let totalJobs = 0;
+      try {
+        const jobsResponse = await fetch('http://localhost:8000/api/jobs/count');
+        if (jobsResponse.ok) {
+          const jobsData = await jobsResponse.json();
+          totalJobs = jobsData.count || 0;
+        }
+      } catch (error) {
+        console.log('Could not fetch job count:', error);
+      }
       
-      const responseRate = ((totalApplications - appliedCount) / totalApplications * 100).toFixed(1);
-      const successRate = (acceptedCount / totalApplications * 100).toFixed(1);
+      // Process stats data for dashboard
+      const statusBreakdown = statsData.status_breakdown || {};
+      const totalApplications = statsData.total_applications || 0;
+      const pendingApplications = statusBreakdown.applied || 0;
+      const interviewsScheduled = (statusBreakdown.interview || 0) + 
+                                  (statusBreakdown.second_interview || 0) + 
+                                  (statusBreakdown.final_interview || 0);
+      const acceptedOffers = (statusBreakdown.accepted || 0) + 
+                            (statusBreakdown.offer_accepted || 0);
+      const rejectedApplications = statusBreakdown.rejected || 0;
       
       setStats({
         totalApplications: totalApplications,
-        pendingApplications: pendingCount,
-        interviewsScheduled: interviewCount,
-        avgResponseTime: 12, // Mock: 12 days average
-        successRate: parseFloat(successRate),
-        responseRate: parseFloat(responseRate),
-        totalJobs: totalJobs, // Use real job count from API
-        acceptedOffers: acceptedCount,
-        rejectedApplications: rejectedCount
+        pendingApplications: pendingApplications,
+        interviewsScheduled: interviewsScheduled,
+        avgResponseTime: statsData.avg_response_time || 0,
+        successRate: (statsData.success_rate * 100) || 0,
+        responseRate: (statsData.response_rate * 100) || 0,
+        totalJobs: totalJobs,
+        acceptedOffers: acceptedOffers,
+        rejectedApplications: rejectedApplications,
+        applicationsThisWeek: statsData.applications_this_week || 0
       });
       
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      // Set complete fallback data for demo
+      // Set empty data on error - no fallback mock data for production
       setApplications([]);
       setStats({
-        totalApplications: 28,
-        pendingApplications: 4,
+        totalApplications: 0,
+        pendingApplications: 0,
         interviewsScheduled: 0,
         avgResponseTime: 0,
         successRate: 0,
-        totalJobs: 0
+        responseRate: 0,
+        totalJobs: 0,
+        acceptedOffers: 0,
+        rejectedApplications: 0,
+        applicationsThisWeek: 0
       });
     } finally {
       setLoading(false);
     }
+  };
+
+  // Manual trigger functions for supervisor
+  const [triggerLoading, setTriggerLoading] = useState(false);
+  const [triggerMessage, setTriggerMessage] = useState('');
+
+  const triggerManualJobSearch = async () => {
+    try {
+      setTriggerLoading(true);
+      setTriggerMessage('');
+      
+      const response = await authenticatedFetch('/api/supervisor/workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          search_query: 'python developer',
+          location: 'Remote',
+          job_type: 'full-time',
+          max_jobs: 50
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        setTriggerMessage('✅ Job search workflow triggered successfully!');
+        // Refresh dashboard data after successful trigger
+        setTimeout(() => {
+          fetchDashboardData();
+        }, 3000);
+      } else {
+        setTriggerMessage('❌ Failed to trigger workflow. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error triggering manual job search:', error);
+      setTriggerMessage('❌ Error occurred. Please check your connection.');
+    } finally {
+      setTriggerLoading(false);
+      // Clear message after 5 seconds
+      setTimeout(() => setTriggerMessage(''), 5000);
+    }
+  };
+
+  const checkSupervisorStatus = async () => {
+    try {
+      const response = await authenticatedFetch('/api/supervisor/status');
+      if (response.ok) {
+        const status = await response.json();
+        const isAutoMode = status.auto_mode_enabled;
+        setTriggerMessage(
+          isAutoMode 
+            ? '✅ Auto-mode is running. Jobs are being processed automatically every hour.' 
+            : '⚠️ Auto-mode is OFF. Use manual trigger below or enable auto-mode.'
+        );
+      }
+    } catch (error) {
+      setTriggerMessage('❌ Could not check supervisor status.');
+    }
+    setTimeout(() => setTriggerMessage(''), 5000);
   };
 
   const StatCard = ({ icon: Icon, title, value, subtitle, color = 'blue', trend }) => (
@@ -195,40 +271,84 @@ const Dashboard = () => {
           <StatCard
             icon={Briefcase}
             title="Total Applications"
-            value={stats.totalApplications || applications.length}
+            value={stats.totalApplications}
             subtitle="This period"
             color="blue"
-            trend={12}
           />
           <StatCard
             icon={Clock}
             title="Pending Reviews"
-            value={stats.pendingApplications || applications.filter(app => app.status === 'applied').length}
+            value={stats.pendingApplications}
             subtitle="Awaiting response"
             color="orange"
-            trend={-5}
           />
           <StatCard
             icon={CheckCircle}
             title="Interviews Scheduled"
-            value={stats.interviewsScheduled || applications.filter(app => app.status === 'interview').length}
+            value={stats.interviewsScheduled}
             subtitle="This period"
             color="green"
-            trend={8}
           />
           <StatCard
             icon={TrendingUp}
             title="Success Rate"
-            value={`${stats.successRate || 0}%`}
+            value={`${stats.successRate.toFixed(1)}%`}
             subtitle="Response rate"
             color="purple"
-            trend={3}
           />
         </div>
 
         {/* Quick Actions */}
         <div className="mb-8">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
+          
+          {/* Supervisor Status and Manual Trigger */}
+          <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 mb-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                  <RefreshCw className="w-5 h-5 mr-2 text-blue-600" />
+                  AI Job Search Engine
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Manually trigger job search and application process if auto-mode malfunctions
+                </p>
+                {triggerMessage && (
+                  <div className="mt-2 text-sm font-medium">
+                    {triggerMessage}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={checkSupervisorStatus}
+                  className="btn-secondary px-4 py-2 text-sm inline-flex items-center"
+                  disabled={triggerLoading}
+                >
+                  <AlertTriangle className="w-4 h-4 mr-2" />
+                  Check Status
+                </button>
+                <button
+                  onClick={triggerManualJobSearch}
+                  disabled={triggerLoading}
+                  className="btn-primary px-4 py-2 text-sm inline-flex items-center"
+                >
+                  {triggerLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      Triggering...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Manual Trigger
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+          
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <QuickAction
               icon={Briefcase}
@@ -262,28 +382,43 @@ const Dashboard = () => {
               </div>
               
               <div className="space-y-4">
-                {['applied', 'interview', 'offered', 'rejected'].map((status) => {
-                  const count = applications.filter(app => app.status === status).length;
+                {[
+                  { key: 'applied', label: 'Applied', color: 'bg-blue-500' },
+                  { key: 'interview', label: 'Interview', color: 'bg-yellow-500' },
+                  { key: 'accepted', label: 'Accepted', color: 'bg-green-500' },
+                  { key: 'rejected', label: 'Rejected', color: 'bg-red-500' }
+                ].map((statusInfo) => {
+                  // Handle multiple interview statuses
+                  let count = 0;
+                  if (statusInfo.key === 'interview') {
+                    count = applications.filter(app => 
+                      app.status === 'interview' || 
+                      app.status === 'second_interview' || 
+                      app.status === 'final_interview'
+                    ).length;
+                  } else if (statusInfo.key === 'accepted') {
+                    count = applications.filter(app => 
+                      app.status === 'accepted' || 
+                      app.status === 'offer_accepted'
+                    ).length;
+                  } else {
+                    count = applications.filter(app => app.status === statusInfo.key).length;
+                  }
+                  
                   const percentage = applications.length > 0 ? (count / applications.length) * 100 : 0;
-                  const colors = {
-                    applied: 'bg-blue-500',
-                    interview: 'bg-yellow-500',
-                    offered: 'bg-green-500',
-                    rejected: 'bg-red-500'
-                  };
                   
                   return (
-                    <div key={status} className="flex items-center">
+                    <div key={statusInfo.key} className="flex items-center">
                       <div className="flex items-center w-32">
-                        <div className={`w-3 h-3 rounded-full ${colors[status]} mr-2`}></div>
-                        <span className="text-sm font-medium text-gray-700 capitalize">
-                          {status}
+                        <div className={`w-3 h-3 rounded-full ${statusInfo.color} mr-2`}></div>
+                        <span className="text-sm font-medium text-gray-700">
+                          {statusInfo.label}
                         </span>
                       </div>
                       <div className="flex-1 mx-4">
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
-                            className={`h-2 rounded-full ${colors[status]}`}
+                            className={`h-2 rounded-full ${statusInfo.color}`}
                             style={{ width: `${percentage}%` }}
                           ></div>
                         </div>
@@ -299,15 +434,18 @@ const Dashboard = () => {
           <div className="card p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
             <div className="space-y-3">
-              {applications.slice(0, 5).map((app, index) => (
-                <div key={index} className="flex items-start space-x-3">
+              {applications
+                .sort((a, b) => new Date(b.applied_at || b.created_at) - new Date(a.applied_at || a.created_at))
+                .slice(0, 5)
+                .map((app, index) => (
+                <div key={app.id || index} className="flex items-start space-x-3">
                   <div className="w-2 h-2 bg-primary-500 rounded-full mt-2"></div>
                   <div>
                     <p className="text-sm font-medium text-gray-900">
-                      Applied to {app.job_title || app.title}
+                      Applied to {app.job_title}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {app.company_name || app.company} • {new Date(app.applied_date || Date.now()).toLocaleDateString()}
+                      {app.company} • {new Date(app.applied_at || app.created_at).toLocaleDateString()}
                     </p>
                   </div>
                 </div>
@@ -317,6 +455,7 @@ const Dashboard = () => {
                 <div className="text-center py-4">
                   <AlertTriangle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                   <p className="text-sm text-gray-500">No recent activity</p>
+                  <p className="text-xs text-gray-400">Start tracking applications to see your progress here</p>
                 </div>
               )}
             </div>

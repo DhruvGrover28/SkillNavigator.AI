@@ -1,0 +1,52 @@
+Name: John Smith
+Software Engineer
+
+Email: john.smith@email.com
+Phone: (555) 123-4567  
+LinkedIn: linkedin.com/in/johnsmith
+GitHub: github.com/johnsmith
+Location: San Francisco, CA
+
+SUMMARY
+Experienced full-stack software engineer with 5+ years developing web applications using modern technologies. Passionate about creating scalable solutions and mentoring junior developers.
+
+EXPERIENCE
+
+Senior Software Engineer - TechCorp Inc
+San Francisco, CA | 2022 - Present
+• Led development of microservices architecture serving 1M+ users
+• Built React/Node.js applications with 99.9% uptime
+• Mentored 3 junior developers and conducted code reviews
+• Implemented CI/CD pipelines reducing deployment time by 60%
+
+Full Stack Developer - StartupXYZ  
+San Francisco, CA | 2020 - 2022
+• Developed responsive web applications using React, Node.js, and PostgreSQL
+• Collaborated with design team to implement pixel-perfect UI components
+• Optimized database queries improving application performance by 40%
+• Participated in agile development process and daily standups
+
+Software Developer - InnovateLabs
+San Jose, CA | 2019 - 2020
+• Built REST APIs using Python Flask and MongoDB
+• Created automated testing suite with 90% code coverage
+• Worked with machine learning team to deploy ML models to production
+
+EDUCATION
+
+Bachelor of Science in Computer Science
+University of California, Berkeley | 2019
+
+SKILLS
+
+Programming Languages: Python, JavaScript, TypeScript, Java, SQL
+Frontend: React, Vue.js, HTML5, CSS3, Tailwind CSS, Bootstrap
+Backend: Node.js, Express, Django, Flask, FastAPI, Spring Boot
+Databases: PostgreSQL, MySQL, MongoDB, Redis, Elasticsearch
+Cloud & DevOps: AWS, Docker, Kubernetes, Jenkins, Git, GitHub Actions
+Tools: VS Code, Postman, Figma, Jira, Slack
+
+CERTIFICATIONS
+• AWS Certified Solutions Architect (2023)
+• Certified Kubernetes Administrator (2022)
+• Google Cloud Professional Developer (2021)

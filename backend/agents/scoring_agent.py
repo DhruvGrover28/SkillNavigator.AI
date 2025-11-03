@@ -10,21 +10,10 @@ import json
 import asyncio
 
 import openai
-
-# Optional ML dependencies - will gracefully degrade if not available
-try:
-    from sentence_transformers import SentenceTransformer
-    import numpy as np
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-    ML_AVAILABLE = True
-except ImportError:
-    # Fallback for production deployment without heavy ML dependencies
-    SentenceTransformer = None
-    np = None
-    TfidfVectorizer = None
-    cosine_similarity = None
-    ML_AVAILABLE = False
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from database.db_connection import database
 from utils.matching import (
@@ -43,17 +32,11 @@ class ScoringAgent:
     def __init__(self):
         self.openai_client = None
         self.sentence_model = None
-        
-        # Initialize TF-IDF vectorizer only if sklearn is available
-        if ML_AVAILABLE and TfidfVectorizer:
-            self.tfidf_vectorizer = TfidfVectorizer(
-                max_features=1000,
-                stop_words='english',
-                ngram_range=(1, 2)
-            )
-        else:
-            self.tfidf_vectorizer = None
-            
+        self.tfidf_vectorizer = TfidfVectorizer(
+            max_features=1000,
+            stop_words='english',
+            ngram_range=(1, 2)
+        )
         self.user_profile_cache = {}
         
         # Scoring weights
@@ -78,15 +61,12 @@ class ScoringAgent:
             else:
                 logger.warning("OpenAI API key not found, semantic scoring will be limited")
             
-            # Initialize sentence transformer model (only if available)
-            if ML_AVAILABLE and SentenceTransformer:
-                try:
-                    self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-                    logger.info("Sentence transformer model loaded")
-                except Exception as e:
-                    logger.warning(f"Failed to load sentence transformer: {e}")
-            else:
-                logger.info("ML dependencies not available, using simplified scoring")
+            # Initialize sentence transformer model
+            try:
+                self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+                logger.info("Sentence transformer model loaded")
+            except Exception as e:
+                logger.warning(f"Failed to load sentence transformer: {e}")
             
             logger.info("Scoring agent initialized successfully")
             
@@ -237,9 +217,8 @@ class ScoringAgent:
     async def _calculate_semantic_similarity(self, profile_features: Dict, job_features: Dict) -> float:
         """Calculate semantic similarity using embeddings"""
         try:
-            # If ML dependencies not available, fall back to basic keyword matching
-            if not ML_AVAILABLE or not self.sentence_model:
-                return self._calculate_basic_text_similarity(profile_features, job_features)
+            if not self.sentence_model:
+                return 0.0
             
             # Combine profile text
             profile_text = " ".join([
@@ -270,45 +249,6 @@ class ScoringAgent:
             
         except Exception as e:
             logger.warning(f"Error calculating semantic similarity: {e}")
-            return self._calculate_basic_text_similarity(profile_features, job_features)
-    
-    def _calculate_basic_text_similarity(self, profile_features: Dict, job_features: Dict) -> float:
-        """Fallback text similarity without ML dependencies"""
-        try:
-            # Get text from profile
-            profile_words = set()
-            for skill in profile_features.get('skills', []):
-                profile_words.update(skill.lower().split())
-            
-            experience_summary = profile_features.get('experience_summary', '')
-            if experience_summary:
-                profile_words.update(experience_summary.lower().split())
-            
-            # Get text from job
-            job_words = set()
-            job_title = job_features.get('title', '')
-            if job_title:
-                job_words.update(job_title.lower().split())
-                
-            job_description = job_features.get('description', '')
-            if job_description:
-                # Take first 200 words to avoid processing too much text
-                job_words.update(job_description.lower().split()[:200])
-            
-            for skill in job_features.get('required_skills', []):
-                job_words.update(skill.lower().split())
-            
-            # Calculate Jaccard similarity
-            if not profile_words or not job_words:
-                return 0.0
-                
-            intersection = len(profile_words.intersection(job_words))
-            union = len(profile_words.union(job_words))
-            
-            return intersection / union if union > 0 else 0.0
-            
-        except Exception as e:
-            logger.warning(f"Error in basic text similarity: {e}")
             return 0.0
     
     def _calculate_skill_match_score(self, profile_features: Dict, job_features: Dict) -> Tuple[float, Dict]:

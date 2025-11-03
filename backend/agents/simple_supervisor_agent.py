@@ -1,6 +1,6 @@
 """
 Simple Supervisor Agent - Windows Compatible Version
-Uses the simple scraper instead of Playwright-based scraper
+Uses the enhanced scraper with real job data sources
 """
 
 import asyncio
@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import json
 
-from .simple_scraper_agent import SimpleScraperAgent, JobListing
+from .enhanced_scraper_agent import EnhancedScraperAgent, JobListing
 from database.db_connection import Database
 from .autoapply_agent import AutoApplyAgent
 # from .scoring_agent import ScoringAgent  # Temporarily disabled due to PyTorch memory issues
@@ -23,11 +23,11 @@ class SimpleSupervisorAgent:
     """
     
     def __init__(self):
-        self.scraper_agent = SimpleScraperAgent()
+        self.scraper_agent = EnhancedScraperAgent()
         self.database = Database()
         self.autoapply_agent = AutoApplyAgent()
         # self.scoring_agent = ScoringAgent()  # Temporarily disabled due to PyTorch memory issues
-        self.scoring_agent = None  # Placeholder
+        self.scoring_agent = None  # Disabled - using built-in simple scoring instead
         self.is_auto_mode = False
         self.auto_task = None
         self.last_search_time = None
@@ -35,9 +35,25 @@ class SimpleSupervisorAgent:
         self.max_cache_age = timedelta(hours=1)  # Cache results for 1 hour
         
         # Auto-apply settings
-        self.auto_apply_enabled = False
-        self.auto_apply_threshold = 80.0  # Default threshold score
-        self.max_auto_applies_per_day = 10
+        self.auto_apply_enabled = True  # Enable auto-apply by default
+        self.auto_apply_threshold = 70.0  # Lower threshold for more applications
+        self.max_auto_applies_per_day = 5  # Conservative limit
+        
+        # Learning and health monitoring
+        self.learning_data = {
+            'scoring_weights': {'skill_match': 0.4, 'experience_match': 0.3, 'salary_match': 0.3},
+            'user_insights': {},
+            'threshold_history': []
+        }
+        self.health_metrics = {
+            'last_health_check': None,
+            'agent_failures': {},
+            'system_load': 'normal'
+        }
+        self.retry_config = {
+            'max_retries': 3,
+            'failed_tasks': {}
+        }
     
     async def initialize(self):
         """Initialize the supervisor agent"""
@@ -81,6 +97,51 @@ class SimpleSupervisorAgent:
         
         logger.info("Simple supervisor agent cleaned up")
     
+    def simple_score_job(self, job_dict: Dict, user_profile: Dict = None) -> float:
+        """
+        Simple scoring algorithm without ML dependencies
+        
+        Args:
+            job_dict: Job information dictionary
+            user_profile: User profile for matching (optional)
+            
+        Returns:
+            Score between 0-100
+        """
+        score = 0.0
+        
+        # Base score for having essential fields
+        if job_dict.get('title'): score += 20
+        if job_dict.get('company'): score += 15
+        if job_dict.get('description'): score += 10
+        
+        # Title-based scoring (simple keyword matching)
+        title = job_dict.get('title', '').lower()
+        description = job_dict.get('description', '').lower()
+        
+        # Python/Software keywords
+        python_keywords = ['python', 'django', 'flask', 'fastapi', 'pandas', 'numpy', 'ml', 'machine learning']
+        for keyword in python_keywords:
+            if keyword in title: score += 8
+            elif keyword in description: score += 3
+            
+        # Experience level matching
+        experience = job_dict.get('experience_level', '').lower()
+        if 'junior' in experience or 'entry' in experience: score += 5
+        if 'mid' in experience or 'intermediate' in experience: score += 8
+        if 'senior' in experience: score += 6
+        
+        # Remote work bonus
+        location = job_dict.get('location', '').lower()
+        if 'remote' in location: score += 10
+        
+        # Job type preference (full-time preferred)
+        job_type = job_dict.get('job_type', '').lower()
+        if 'full-time' in job_type or 'full time' in job_type: score += 5
+        
+        # Ensure score is within bounds
+        return min(100.0, max(0.0, score))
+
     async def trigger_job_search(self, search_params: Dict) -> Dict:
         """
         Trigger a manual job search
@@ -110,6 +171,32 @@ class SimpleSupervisorAgent:
             # Convert JobListing objects to dicts and save to database
             job_dicts = []
             for job in jobs:
+                # Convert ISO string date to datetime object if needed
+                posted_date = job.date_posted
+                if isinstance(posted_date, str):
+                    try:
+                        # Parse ISO format like "2025-10-30T11:00:02+00:00"
+                        posted_date = datetime.fromisoformat(posted_date.replace('Z', '+00:00'))
+                    except:
+                        posted_date = datetime.now()
+                
+                # Detect source from URL
+                source = 'unknown'
+                if job.url:
+                    if 'remoteok.com' in job.url or 'remoteOK.com' in job.url:
+                        source = 'remoteok'
+                    elif 'arbeitnow.com' in job.url:
+                        source = 'arbeitnow'
+                    elif 'justremote.co' in job.url:
+                        source = 'justremote'
+                
+                # Generate unique external_id for duplicate prevention
+                # Use URL if available, otherwise title+company+source
+                if job.url and len(job.url) > 10:
+                    external_id = f"{source}_{hash(job.url)}"
+                else:
+                    external_id = f"{source}_{hash(job.title + job.company + source)}"
+                
                 job_dict = {
                     'title': job.title,
                     'company': job.company,
@@ -118,24 +205,49 @@ class SimpleSupervisorAgent:
                     'apply_url': job.url,  # Map url to apply_url
                     'job_type': job.job_type,
                     'experience_level': job.experience,
-                    'source': 'remoteok',  # Set source
-                    'posted_date': job.date_posted,
-                    'external_id': f"remoteok_{hash(job.title + job.company)}"  # Generate external_id
+                    'source': source,
+                    'posted_date': posted_date,
+                    'external_id': external_id
                 }
                 job_dicts.append(job_dict)
             
             # Save jobs to database if any were found
             saved_jobs = []
+            scored_jobs = []
+            auto_applied_jobs = []
+            
             if job_dicts:
                 try:
                     saved_jobs = await self.database.save_jobs(job_dicts)
                     logger.info(f"Saved {len(saved_jobs)} jobs to database")
+                    
+                    # Score the jobs using simple scoring
+                    for job_dict in job_dicts:
+                        score = self.simple_score_job(job_dict)
+                        job_dict['match_score'] = score
+                        scored_jobs.append(job_dict)
+                        
+                        # Auto-apply if score meets threshold and auto-apply is enabled
+                        if (self.auto_apply_enabled and 
+                            score >= self.auto_apply_threshold and 
+                            len(auto_applied_jobs) < self.max_auto_applies_per_day):
+                            try:
+                                if self.autoapply_agent:
+                                    apply_result = await self.autoapply_agent.apply_to_job(job_dict)
+                                    if apply_result.get('success'):
+                                        auto_applied_jobs.append(job_dict)
+                                        logger.info(f"Auto-applied to {job_dict['title']} at {job_dict['company']} (score: {score})")
+                            except Exception as e:
+                                logger.error(f"Auto-apply failed for {job_dict['title']}: {e}")
+                    
+                    logger.info(f"Scored {len(scored_jobs)} jobs, auto-applied to {len(auto_applied_jobs)} jobs")
+                    
                 except Exception as e:
                     logger.error(f"Failed to save jobs to database: {e}")
             
-            # Prepare response with original job format for frontend
+            # Prepare response with original job format for frontend including scores
             response_jobs = []
-            for job in jobs:
+            for i, job in enumerate(jobs):
                 job_dict = {
                     'title': job.title,
                     'company': job.company,
@@ -146,7 +258,8 @@ class SimpleSupervisorAgent:
                     'date_posted': job.date_posted,
                     'job_type': job.job_type,
                     'experience': job.experience,
-                    'skills': job.skills or []
+                    'skills': job.skills or [],
+                    'match_score': scored_jobs[i]['match_score'] if i < len(scored_jobs) else 0
                 }
                 response_jobs.append(job_dict)
             
@@ -157,6 +270,8 @@ class SimpleSupervisorAgent:
                 'jobs': response_jobs,
                 'total_found': len(response_jobs),
                 'saved_to_db': len(saved_jobs),
+                'scored_jobs': len(scored_jobs),
+                'auto_applied': len(auto_applied_jobs),
                 'search_duration_seconds': search_duration,
                 'timestamp': datetime.now().isoformat(),
                 'cache_key': cache_key
@@ -510,6 +625,198 @@ class SimpleSupervisorAgent:
                 'message': 'Auto-apply check failed',
                 'timestamp': datetime.now().isoformat()
             }
+    
+    async def _comprehensive_health_check(self) -> Dict:
+        """Perform comprehensive health check of all agents"""
+        from datetime import datetime
+        
+        health_status = {
+            'scraper_agent': 'healthy' if self.scraper_agent else 'unhealthy',
+            'scoring_agent': 'degraded' if self.scoring_agent is None else 'healthy',
+            'autoapply_agent': 'healthy' if self.autoapply_agent else 'unhealthy',
+            'database': 'healthy'
+        }
+        
+        # Test database connection
+        try:
+            self.database.fetch_one("SELECT 1")
+            health_status['database'] = 'healthy'
+        except Exception:
+            health_status['database'] = 'unhealthy'
+        
+        # Calculate overall health
+        unhealthy_count = sum(1 for status in health_status.values() if status == 'unhealthy')
+        degraded_count = sum(1 for status in health_status.values() if status == 'degraded')
+        
+        if unhealthy_count == 0 and degraded_count == 0:
+            overall_health = 'healthy'
+        elif unhealthy_count <= 1:
+            overall_health = 'degraded'
+        else:
+            overall_health = 'unhealthy'
+        
+        return {
+            'agents': health_status,
+            'overall_health': overall_health,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    async def analyze_user_outcomes(self, user_id: int) -> Dict:
+        """Simplified user outcome analysis"""
+        try:
+            # Get user's recent applications using SQLAlchemy
+            from datetime import datetime, timedelta
+            from database.db_connection import JobApplication, Job
+            
+            db = self.database.get_session()
+            try:
+                thirty_days_ago = datetime.now() - timedelta(days=30)
+                
+                # Query applications with job details
+                applications_query = db.query(JobApplication, Job).join(Job).filter(
+                    JobApplication.user_id == user_id,
+                    JobApplication.applied_at >= thirty_days_ago
+                ).all()
+                
+                # Convert to list of dicts for easier processing
+                applications = []
+                for app, job in applications_query:
+                    applications.append({
+                        'status': app.status,
+                        'applied_at': app.applied_at,
+                        'title': job.title,
+                        'company': job.company
+                    })
+                    
+            finally:
+                db.close()
+            
+            # Calculate basic outcomes
+            outcomes = {
+                'total': len(applications),
+                'interviews': len([a for a in applications if 'interview' in a.get('status', '').lower()]),
+                'offers': len([a for a in applications if a.get('status') in ['accepted', 'offer_accepted']]),
+                'rejections': len([a for a in applications if a.get('status') == 'rejected'])
+            }
+            
+            # Generate simple insights
+            insights = []
+            if outcomes['total'] > 0:
+                success_rate = (outcomes['interviews'] + outcomes['offers']) / outcomes['total']
+                if success_rate < 0.1:
+                    insights.append("Your response rate is low. Consider improving your application materials.")
+                elif success_rate > 0.3:
+                    insights.append("Great job! You have a strong response rate from employers.")
+            
+            if outcomes['total'] < 5:
+                insights.append("Apply to more positions to improve your job search success.")
+            
+            # Store insights
+            self.learning_data['user_insights'][user_id] = {
+                'outcomes': outcomes,
+                'insights': insights,
+                'last_analysis': datetime.now().isoformat()
+            }
+            
+            return {
+                'success': True,
+                'outcomes': outcomes,
+                'insights': insights,
+                'adjustments_made': False,
+                'message': 'Analysis completed successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing user outcomes: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def adaptive_threshold_tuning(self, user_id: int) -> Dict:
+        """Simplified adaptive threshold tuning"""
+        try:
+            user_data = self.learning_data['user_insights'].get(user_id)
+            if not user_data:
+                return {'success': False, 'message': 'No user data available. Run analysis first.'}
+            
+            outcomes = user_data['outcomes']
+            current_threshold = self.auto_apply_threshold
+            
+            # Simple threshold adjustment logic
+            total_apps = outcomes['total']
+            if total_apps > 0:
+                success_rate = (outcomes['interviews'] + outcomes['offers']) / total_apps
+                
+                new_threshold = current_threshold
+                if success_rate < 0.1 and total_apps > 10:  # Low success, many apps
+                    new_threshold = min(95.0, current_threshold + 5.0)
+                elif success_rate > 0.3:  # High success
+                    new_threshold = max(70.0, current_threshold - 2.0)
+                
+                if abs(new_threshold - current_threshold) >= 2.0:
+                    self.auto_apply_threshold = new_threshold
+                    self.learning_data['threshold_history'].append({
+                        'user_id': user_id,
+                        'old_threshold': current_threshold,
+                        'new_threshold': new_threshold,
+                        'success_rate': success_rate,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    
+                    return {
+                        'success': True,
+                        'threshold_adjusted': True,
+                        'old_threshold': current_threshold,
+                        'new_threshold': new_threshold,
+                        'reason': f"Based on {success_rate:.1%} success rate from {total_apps} applications"
+                    }
+            
+            return {
+                'success': True,
+                'threshold_adjusted': False,
+                'current_threshold': current_threshold,
+                'message': 'No threshold adjustment needed'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in threshold tuning: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def setup_user_schedule(self, user_id: int, schedule_config: Dict) -> Dict:
+        """Setup user-specific scheduling (simplified)"""
+        try:
+            # For now, just acknowledge the request
+            # In a full implementation, this would store per-user schedules
+            return {
+                'success': True,
+                'message': 'User schedule configuration acknowledged',
+                'user_id': user_id,
+                'config': schedule_config
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    async def retry_failed_task(self, task_id: str, task_data: Dict) -> Dict:
+        """Simplified task retry mechanism"""
+        try:
+            # Basic retry logic - just re-run the task
+            task_type = task_data.get('type', 'unknown')
+            
+            if task_type == 'job_search':
+                result = await self.trigger_job_search(task_data.get('search_params', {}))
+                return {
+                    'success': result.get('success', False),
+                    'message': 'Task retry completed',
+                    'task_type': task_type,
+                    'retry_count': 1
+                }
+            
+            return {
+                'success': False,
+                'message': f'Unknown task type: {task_type}',
+                'task_type': task_type
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
     
     def get_auto_apply_status(self) -> Dict:
         """Get current auto-apply settings and status"""

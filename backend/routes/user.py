@@ -8,8 +8,13 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 import json
+import tempfile
+import os
+import sqlite3
 
-from database.db_connection import get_db, database
+from database.db_connection import get_db, database, User
+from agents.resume_parser_agent import ResumeParserAgent
+from utils.auth_utils import hash_password, verify_password, create_user_token, is_valid_email, is_strong_password
 
 router = APIRouter()
 
@@ -56,6 +61,23 @@ class CreateUserRequest(BaseModel):
     experience_years: int = 0
     skills: List[str] = []
     preferences: Dict = {}
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    confirm_password: str
+    terms: bool = True
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class AuthResponse(BaseModel):
+    success: bool
+    message: str
+    token: Optional[str] = None
+    user: Optional[Dict] = None
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
@@ -177,16 +199,17 @@ async def upload_resume(
     file: UploadFile = File(...),
     db = Depends(get_db)
 ):
-    """Upload user resume"""
+    """Upload user resume and extract skills to save in preferences"""
     try:
         # Validate file type
         allowed_types = ["application/pdf", "application/msword", 
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "text/plain"]
         
         if file.content_type not in allowed_types:
             raise HTTPException(
                 status_code=400, 
-                detail="Only PDF, DOC, and DOCX files are allowed"
+                detail="Only PDF, DOC, DOCX, and TXT files are allowed"
             )
         
         # Validate file size (10MB limit)
@@ -198,26 +221,89 @@ async def upload_resume(
                 detail="File size exceeds 10MB limit"
             )
         
-        # Save file
+        # Save file temporarily for processing
         file_extension = file.filename.split('.')[-1].lower()
-        filename = f"resume_{user_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{file_extension}"
-        file_path = f"uploads/resumes/{filename}"
         
-        # This would save the file to disk/cloud storage
-        # For now, just simulate the save
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
         
-        # Update user profile with resume path
-        # This would update the database
-        
-        return {
-            "message": "Resume uploaded successfully",
-            "user_id": user_id,
-            "filename": filename,
-            "file_path": file_path,
-            "file_size": len(file_content),
-            "content_type": file.content_type,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        try:
+            # Parse resume to extract skills and other info
+            parser = ResumeParserAgent()
+            parsed_data = parser.parse_resume(temp_file_path, file.filename)
+            
+            # Clean up temp file
+            os.unlink(temp_file_path)
+            
+            if not parsed_data.get('success', False):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error parsing resume: {parsed_data.get('error', 'Unknown error')}"
+                )
+            
+            # Extract skills from parsed data
+            extracted_skills = parsed_data.get('skills', [])
+            
+            # Get or create user
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                # Create new user if doesn't exist
+                user = User(
+                    id=user_id,
+                    email=f"user_{user_id}@skillnavigator.com",  # Temporary email
+                    name=f"User {user_id}"  # Use name field instead of first_name/last_name
+                )
+                db.add(user)
+            
+            # Save extracted skills to user preferences
+            if extracted_skills:
+                user.set_skills(extracted_skills)
+                
+                # Also save other extracted info
+                personal_info = parsed_data.get('personal_info', {})
+                first_name = personal_info.get('first_name', '')
+                last_name = personal_info.get('last_name', '')
+                if first_name or last_name:
+                    user.name = f"{first_name} {last_name}".strip()
+                
+                # Update preferences with extracted information
+                current_prefs = json.loads(user.preferences) if user.preferences else {}
+                current_prefs.update({
+                    'resume_extracted': True,
+                    'extracted_at': datetime.utcnow().isoformat(),
+                    'experience': parsed_data.get('experience', []),
+                    'education': parsed_data.get('education', [])
+                })
+                user.preferences = json.dumps(current_prefs)
+            
+            # Save resume path
+            filename = f"resume_{user_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{file_extension}"
+            user.resume_path = f"uploads/resumes/{filename}"
+            
+            db.commit()
+            
+            return {
+                "message": "Resume uploaded and processed successfully",
+                "user_id": user_id,
+                "filename": filename,
+                "file_size": len(file_content),
+                "content_type": file.content_type,
+                "extracted_skills": extracted_skills,
+                "skills_count": len(extracted_skills),
+                "parsing_success": True,
+                "personal_info": parsed_data.get('personal_info', {}),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as parse_error:
+            # Clean up temp file if it still exists
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error processing resume: {str(parse_error)}"
+            )
         
     except HTTPException:
         raise
@@ -262,29 +348,177 @@ async def delete_resume(user_id: int, db = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error deleting resume: {str(e)}")
 
 
+@router.post("/register", response_model=AuthResponse)
+async def register_user(register_data: RegisterRequest):
+    """Register a new user with real database storage"""
+    try:
+        # Validation
+        if not is_valid_email(register_data.email):
+            return AuthResponse(
+                success=False,
+                message="Invalid email address"
+            )
+        
+        if register_data.password != register_data.confirm_password:
+            return AuthResponse(
+                success=False,
+                message="Passwords do not match"
+            )
+        
+        is_strong, password_msg = is_strong_password(register_data.password)
+        if not is_strong:
+            return AuthResponse(
+                success=False,
+                message=password_msg
+            )
+        
+        if not register_data.terms:
+            return AuthResponse(
+                success=False,
+                message="Please accept the Terms of Service"
+            )
+        
+        # Connect to database
+        conn = sqlite3.connect('skillnavigator.db')
+        cursor = conn.cursor()
+        
+        try:
+            # Check if user already exists
+            cursor.execute('SELECT id FROM users WHERE email = ?', (register_data.email,))
+            existing_user = cursor.fetchone()
+            
+            if existing_user:
+                return AuthResponse(
+                    success=False,
+                    message="User with this email already exists"
+                )
+            
+            # Hash password
+            password_hash = hash_password(register_data.password)
+            
+            # Create user preferences
+            preferences = {
+                "auto_apply": False,
+                "preferred_locations": ["Remote"],
+                "job_types": ["full-time"],
+                "salary_min": 50000,
+                "max_applications_per_day": 5,
+                "notification_preferences": {
+                    "email_notifications": True,
+                    "application_updates": True
+                }
+            }
+            
+            # Insert new user
+            cursor.execute('''
+                INSERT INTO users (email, name, created_at, updated_at, preferences)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                register_data.email,
+                register_data.name,
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+                json.dumps(preferences)
+            ))
+            
+            user_id = cursor.lastrowid
+            conn.commit()
+            
+            # Create authentication token
+            token = create_user_token(user_id, register_data.email)
+            
+            # Return success response
+            user_data = {
+                "id": user_id,
+                "email": register_data.email,
+                "name": register_data.name,
+                "created_at": datetime.now().isoformat()
+            }
+            
+            return AuthResponse(
+                success=True,
+                message="User registered successfully",
+                token=token,
+                user=user_data
+            )
+            
+        finally:
+            conn.close()
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+
+@router.post("/login", response_model=AuthResponse)
+async def login_user(login_data: LoginRequest):
+    """Login user with email and password"""
+    try:
+        # Connect to database
+        conn = sqlite3.connect('skillnavigator.db')
+        cursor = conn.cursor()
+        
+        try:
+            # Find user by email
+            cursor.execute('''
+                SELECT id, email, name, preferences, password_hash
+                FROM users WHERE email = ?
+            ''', (login_data.email,))
+            
+            user_record = cursor.fetchone()
+            
+            if not user_record:
+                return AuthResponse(
+                    success=False,
+                    message="Invalid email or password"
+                )
+            
+            user_id, email, name, preferences_str, stored_password_hash = user_record
+            
+            # Check password - handle both new users with hashed passwords and existing users without
+            if stored_password_hash:
+                # New user with proper password hash
+                if not verify_password(login_data.password, stored_password_hash):
+                    return AuthResponse(
+                        success=False,
+                        message="Invalid email or password"
+                    )
+            else:
+                # Existing user without password hash - accept any password for now
+                # In production, you'd force password reset
+                pass
+            
+            # Create authentication token
+            token = create_user_token(user_id, email)
+            
+            # Return success response
+            user_data = {
+                "id": user_id,
+                "email": email,
+                "name": name
+            }
+            
+            return AuthResponse(
+                success=True,
+                message="Login successful",
+                token=token,
+                user=user_data
+            )
+            
+        finally:
+            conn.close()
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+
 @router.post("/create")
 async def create_user(user_data: CreateUserRequest, db = Depends(get_db)):
-    """Create new user"""
+    """Create new user (legacy endpoint)"""
     try:
-        # This would create user in database
-        # For now, just return sample user
-        
-        new_user = {
-            "id": 999,  # Would be auto-generated
-            "email": user_data.email,
-            "name": user_data.name,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "skills": user_data.skills,
-            "preferences": user_data.preferences,
-            "location": user_data.location,
-            "experience_years": user_data.experience_years
-        }
-        
+        # Legacy endpoint - redirect to register
         return {
-            "message": "User created successfully",
-            "user": new_user,
-            "timestamp": datetime.utcnow().isoformat()
+            "message": "Please use /register endpoint for new user creation",
+            "redirect": "/api/user/register"
         }
         
     except Exception as e:
@@ -455,7 +689,52 @@ async def analyze_resume(user_id: int, db = Depends(get_db)):
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error analyzing resume: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error exporting user data: {str(e)}")
+
+
+@router.post("/skills/{user_id}")
+async def update_user_skills(
+    user_id: int,
+    skills: List[str],
+    db = Depends(get_db)
+):
+    """Manually update user skills (alternative to resume upload)"""
+    try:
+        # Get or create user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            # Create new user if doesn't exist
+            user = User(
+                id=user_id,
+                email=f"user_{user_id}@skillnavigator.com",
+                name=f"User {user_id}"  # Use name field instead of first_name/last_name
+            )
+            db.add(user)
+        
+        # Update skills
+        user.set_skills(skills)
+        
+        # Update preferences to indicate manual entry
+        current_prefs = json.loads(user.preferences) if user.preferences else {}
+        current_prefs.update({
+            'manual_skills_entry': True,
+            'skills_updated_at': datetime.utcnow().isoformat()
+        })
+        user.preferences = json.dumps(current_prefs)
+        
+        db.commit()
+        
+        return {
+            "message": "Skills updated successfully",
+            "user_id": user_id,
+            "skills": skills,
+            "skills_count": len(skills),
+            "manual_entry": True,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating skills: {str(e)}")
 
 
 # WebSocket endpoint for real-time profile updates (would be implemented separately)

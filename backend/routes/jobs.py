@@ -7,8 +7,9 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
+import json
 
-from database.db_connection import get_db, database, Job, JobApplication
+from database.db_connection import get_db, database, Job, JobApplication, User
 from agents.simple_supervisor_agent import SimpleSupervisorAgent
 
 router = APIRouter()
@@ -41,6 +42,12 @@ class JobResponse(BaseModel):
     scraped_at: Optional[datetime] = None
     source: str
     relevance_score: Optional[float] = None
+    
+    # AI Scoring Fields
+    match_score: Optional[float] = None
+    classification: Optional[str] = None
+    score_breakdown: Optional[Dict] = None
+    score_explanation: Optional[str] = None
 
 class ScoredJobResponse(JobResponse):
     relevance_score: float
@@ -94,12 +101,46 @@ async def get_jobs(
         if experience_level:
             query = query.filter(Job.experience_level == experience_level)
         if min_score is not None:
-            query = query.filter(Job.relevance_score >= min_score)
+            query = query.filter(Job.match_score >= min_score)
+        
+        # Adaptive filtering based on user preferences
+        threshold = _get_adaptive_threshold(db)
+        query = query.filter(Job.match_score >= threshold)
+        
+        # Sort by match score in descending order (highest scores first)
+        query = query.order_by(Job.match_score.desc())
         
         # Apply pagination
         jobs = query.offset(offset).limit(limit).all()
         
-        return jobs
+        # Convert to response format with proper score fields
+        job_responses = []
+        for job in jobs:
+            job_data = {
+                "id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "description": job.description,
+                "requirements": job.requirements,
+                "salary_min": job.salary_min,
+                "salary_max": job.salary_max,
+                "job_type": job.job_type,
+                "experience_level": job.experience_level,
+                "remote_allowed": job.remote_allowed if job.remote_allowed is not None else False,
+                "apply_url": job.apply_url,
+                "posted_date": job.posted_date,
+                "scraped_at": job.scraped_at,
+                "source": job.source,
+                "relevance_score": job.relevance_score,
+                "match_score": job.match_score,
+                "classification": job.classification,
+                "score_breakdown": json.loads(job.score_breakdown) if job.score_breakdown else None,
+                "score_explanation": job.score_explanation
+            }
+            job_responses.append(job_data)
+        
+        return job_responses
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching jobs: {str(e)}")
@@ -296,9 +337,20 @@ async def get_jobs_summary(db = Depends(get_db)):
         # Remote jobs count
         remote_jobs = db.query(Job).filter(Job.remote_allowed == True).count()
         
+        # Calculate average match score
+        avg_match_score = 0.0
+        if total_jobs > 0:
+            # Get all match scores that are not null
+            match_scores = db.query(Job.match_score).filter(Job.match_score.isnot(None)).all()
+            if match_scores:
+                scores = [score[0] for score in match_scores if score[0] is not None]
+                if scores:
+                    avg_match_score = sum(scores) / len(scores)
+        
         stats = {
             "total_jobs": total_jobs,
             "jobs_today": jobs_today,
+            "avg_match_score": round(avg_match_score, 1),
             "top_companies": top_companies,
             "top_job_titles": top_job_titles,
             "sources": sources,
@@ -598,6 +650,144 @@ async def trigger_auto_apply_check():
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error running auto-apply check: {str(e)}")
+
+
+@router.get("/auto-apply/analytics")
+async def get_auto_apply_analytics(
+    days: int = Query(30, ge=1, le=365),
+    user_id: int = Query(None, ge=1)
+):
+    """Get auto-apply analytics and performance metrics"""
+    try:
+        supervisor = await get_supervisor()
+        analytics = await supervisor.autoapply_agent.get_auto_apply_analytics(user_id, days)
+        
+        return {
+            "message": "Auto-apply analytics retrieved successfully",
+            "analytics": analytics,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting auto-apply analytics: {str(e)}")
+
+
+# Auto-apply settings endpoints
+@router.get("/auto-apply/settings/{user_id}")
+async def get_auto_apply_settings(user_id: int, db = Depends(get_db)):
+    """Get auto-apply settings for a user"""
+    try:
+        from database.db_connection import AutoApplySettings
+        
+        settings = db.query(AutoApplySettings).filter(AutoApplySettings.user_id == user_id).first()
+        
+        if not settings:
+            # Return default settings
+            return {
+                "user_id": user_id,
+                "enabled": False,
+                "min_match_score": 80.0,
+                "max_applications_per_day": 10,
+                "preferred_methods": ['email', 'http_form'],
+                "excluded_methods": [],
+                "delay_between_applications": 60,
+                "excluded_companies": [],
+                "message": "Default settings (not saved yet)"
+            }
+        
+        return {
+            "user_id": user_id,
+            "enabled": settings.enabled,
+            "min_match_score": settings.min_match_score,
+            "max_applications_per_day": settings.max_applications_per_day,
+            "preferred_methods": settings.get_preferred_methods(),
+            "excluded_methods": json.loads(settings.excluded_methods) if settings.excluded_methods else [],
+            "delay_between_applications": settings.delay_between_applications,
+            "excluded_companies": settings.get_excluded_companies(),
+            "last_run": settings.last_run.isoformat() if settings.last_run else None,
+            "created_at": settings.created_at.isoformat(),
+            "updated_at": settings.updated_at.isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting auto-apply settings: {str(e)}")
+
+
+@router.put("/auto-apply/settings/{user_id}")
+async def update_auto_apply_settings(
+    user_id: int, 
+    settings_data: Dict,
+    db = Depends(get_db)
+):
+    """Update auto-apply settings for a user"""
+    try:
+        from database.db_connection import AutoApplySettings
+        
+        settings = db.query(AutoApplySettings).filter(AutoApplySettings.user_id == user_id).first()
+        
+        if not settings:
+            # Create new settings
+            settings = AutoApplySettings(user_id=user_id)
+            db.add(settings)
+        
+        # Update settings
+        if 'enabled' in settings_data:
+            settings.enabled = settings_data['enabled']
+        if 'min_match_score' in settings_data:
+            settings.min_match_score = float(settings_data['min_match_score'])
+        if 'max_applications_per_day' in settings_data:
+            settings.max_applications_per_day = int(settings_data['max_applications_per_day'])
+        if 'preferred_methods' in settings_data:
+            settings.set_preferred_methods(settings_data['preferred_methods'])
+        if 'excluded_methods' in settings_data:
+            settings.excluded_methods = json.dumps(settings_data['excluded_methods'])
+        if 'delay_between_applications' in settings_data:
+            settings.delay_between_applications = int(settings_data['delay_between_applications'])
+        if 'excluded_companies' in settings_data:
+            settings.set_excluded_companies(settings_data['excluded_companies'])
+        
+        settings.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(settings)
+        
+        return {
+            "message": "Auto-apply settings updated successfully",
+            "user_id": user_id,
+            "settings": {
+                "enabled": settings.enabled,
+                "min_match_score": settings.min_match_score,
+                "max_applications_per_day": settings.max_applications_per_day,
+                "preferred_methods": settings.get_preferred_methods(),
+                "excluded_companies": settings.get_excluded_companies()
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating auto-apply settings: {str(e)}")
+
+
+def _get_adaptive_threshold(db) -> float:
+    """Get adaptive filtering threshold based on user preferences"""
+    try:
+        # Check if user has preferences (from resume or manual entry)
+        user = db.query(User).filter(
+            (User.skills.isnot(None)) | 
+            (User.preferences.isnot(None))
+        ).first()
+        
+        if user and (user.skills or user.preferences):
+            # User has preferences - temporarily lowered to show some results for demo
+            return 20.0
+        else:
+            # No user preferences - use lower threshold to show more jobs
+            return 15.0
+            
+    except Exception:
+        # Default to lower threshold if error
+        return 15.0
 
 
 # WebSocket endpoint for real-time job updates (would be implemented separately)

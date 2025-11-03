@@ -37,6 +37,22 @@ class AutoApplyAgent:
         self.applications_today = 0
         self.max_applications_per_day = int(os.getenv("MAX_APPLICATIONS_PER_DAY", 10))
         
+        # Enhanced error handling and retry settings
+        self.max_retries = 3
+        self.retry_delay_base = 5  # seconds
+        self.fallback_strategies = ['http_form', 'email', 'manual']
+        self.success_rate_threshold = 0.3  # Switch methods if success rate < 30%
+        
+        # Track method performance for optimization
+        self.method_stats = {
+            'linkedin': {'attempts': 0, 'successes': 0},
+            'indeed': {'attempts': 0, 'successes': 0},
+            'internshala': {'attempts': 0, 'successes': 0},
+            'email': {'attempts': 0, 'successes': 0},
+            'form': {'attempts': 0, 'successes': 0},
+            'http_form': {'attempts': 0, 'successes': 0}
+        }
+        
         # Application methods
         self.application_handlers = {
             'linkedin': self._apply_linkedin,
@@ -190,59 +206,144 @@ class AutoApplyAgent:
         return results
     
     async def _apply_to_job(self, user_profile: Dict, job) -> Dict:
-        """Apply to a single job using the appropriate method"""
+        """Apply to a single job using the appropriate method with retry logic"""
         
-        # Determine application method
-        application_method = self._determine_application_method(job)
-        
-        # Generate cover letter
+        # Generate cover letter once
         cover_letter = await self.cover_letter_generator.generate_cover_letter(
             user_profile, job
         )
         
-        try:
-            # Apply using the determined method
-            if application_method in self.application_handlers:
-                result = await self.application_handlers[application_method](
-                    user_profile, job, cover_letter
-                )
-            else:
-                result = await self._apply_generic(user_profile, job, cover_letter)
+        # Determine primary application method and fallbacks
+        primary_method = self._determine_application_method(job)
+        methods_to_try = [primary_method]
+        
+        # Add fallback methods if primary fails
+        for fallback in self.fallback_strategies:
+            if fallback != primary_method and fallback not in methods_to_try:
+                # Check if this fallback is applicable for this job
+                if self._is_method_applicable(job, fallback):
+                    methods_to_try.append(fallback)
+        
+        last_error = None
+        
+        # Try each method with retries
+        for method in methods_to_try:
+            if method not in self.application_handlers:
+                continue
+                
+            # Track method attempt
+            self.method_stats[method]['attempts'] += 1
             
-            result['cover_letter'] = cover_letter
-            return result
+            # Try this method with retries
+            for attempt in range(self.max_retries):
+                try:
+                    logger.info(f"Attempting {method} application for job {job.id} (attempt {attempt + 1})")
+                    
+                    result = await self.application_handlers[method](
+                        user_profile, job, cover_letter
+                    )
+                    
+                    if result['success']:
+                        # Track success
+                        self.method_stats[method]['successes'] += 1
+                        result['cover_letter'] = cover_letter
+                        result['attempts_made'] = attempt + 1
+                        result['method_tried'] = method
+                        logger.info(f"Successfully applied using {method} for job {job.id}")
+                        return result
+                    else:
+                        last_error = result.get('error', 'Unknown error')
+                        logger.warning(f"{method} attempt {attempt + 1} failed: {last_error}")
+                        
+                        # Wait before retry (exponential backoff)
+                        if attempt < self.max_retries - 1:
+                            delay = self.retry_delay_base * (2 ** attempt)
+                            await wait_random_delay(delay, delay + 2)
+                        
+                except Exception as e:
+                    last_error = str(e)
+                    logger.error(f"{method} attempt {attempt + 1} threw exception: {e}")
+                    
+                    # Wait before retry
+                    if attempt < self.max_retries - 1:
+                        delay = self.retry_delay_base * (2 ** attempt)
+                        await wait_random_delay(delay, delay + 2)
             
-        except Exception as e:
-            logger.error(f"Error in application method {application_method}: {e}")
-            return {
-                'job_id': job.id,
-                'success': False,
-                'error': str(e),
-                'method': application_method,
-                'cover_letter': cover_letter
-            }
+            # If we get here, all retries for this method failed
+            logger.warning(f"All {self.max_retries} attempts failed for method {method}")
+        
+        # All methods failed
+        return {
+            'job_id': job.id,
+            'success': False,
+            'error': f'All application methods failed. Last error: {last_error}',
+            'methods_tried': methods_to_try,
+            'cover_letter': cover_letter,
+            'total_attempts': sum(self.max_retries for _ in methods_to_try)
+        }
     
     def _determine_application_method(self, job) -> str:
-        """Determine the best application method for a job"""
+        """Determine the best application method for a job based on success rates and availability"""
         source = getattr(job, 'source', 'unknown')
         apply_url = getattr(job, 'apply_url', '')
         
-        # If using HTTP session (not browser), use HTTP-based methods
+        # Check success rates and prefer better performing methods
+        available_methods = []
+        
+        # If using HTTP session (not browser), prioritize HTTP-based methods
         if self.browser == "http_session":
             if 'mailto:' in apply_url:
-                return 'email'
-            else:
-                return 'http_form'  # New HTTP-based form submission
-        
-        # Browser-based methods
-        if source in ['linkedin', 'indeed', 'internshala']:
-            return source
-        elif 'mailto:' in apply_url:
-            return 'email'
-        elif apply_url:
-            return 'form'
+                available_methods.append(('email', self._get_method_success_rate('email')))
+            
+            # Check for specific platform optimizations
+            if any(platform in apply_url.lower() for platform in ['remoteok', 'arbeitnow', 'himalayas']):
+                available_methods.append(('http_form', self._get_method_success_rate('http_form')))
+            
+            if not available_methods:
+                available_methods.append(('http_form', self._get_method_success_rate('http_form')))
         else:
-            return 'manual'
+            # Browser-based methods with success rate priority
+            if source in ['linkedin', 'indeed', 'internshala']:
+                rate = self._get_method_success_rate(source)
+                if rate > self.success_rate_threshold:
+                    available_methods.append((source, rate))
+            
+            if 'mailto:' in apply_url:
+                available_methods.append(('email', self._get_method_success_rate('email')))
+            elif apply_url:
+                available_methods.append(('form', self._get_method_success_rate('form')))
+        
+        # Sort by success rate and return the best method
+        if available_methods:
+            available_methods.sort(key=lambda x: x[1], reverse=True)
+            return available_methods[0][0]
+        
+        return 'manual'
+    
+    def _get_method_success_rate(self, method: str) -> float:
+        """Calculate success rate for a given method"""
+        stats = self.method_stats.get(method, {'attempts': 0, 'successes': 0})
+        if stats['attempts'] == 0:
+            return 1.0  # Assume perfect rate for untested methods
+        return stats['successes'] / stats['attempts']
+    
+    def _is_method_applicable(self, job, method: str) -> bool:
+        """Check if a method is applicable for this job"""
+        apply_url = getattr(job, 'apply_url', '')
+        source = getattr(job, 'source', 'unknown')
+        
+        if method == 'email':
+            return 'mailto:' in apply_url
+        elif method == 'http_form':
+            return bool(apply_url) and 'mailto:' not in apply_url
+        elif method in ['linkedin', 'indeed', 'internshala']:
+            return source == method or method in apply_url.lower()
+        elif method == 'form':
+            return bool(apply_url) and self.browser != "http_session"
+        elif method == 'manual':
+            return True
+        
+        return False
     
     async def _apply_http_form(self, user_profile: Dict, job, cover_letter: str) -> Dict:
         """Apply to job using HTTP requests instead of browser automation"""
@@ -307,17 +408,192 @@ class AutoApplyAgent:
         }
     
     async def _apply_http_generic(self, user_profile: Dict, job, cover_letter: str, page_content: str) -> Dict:
-        """Apply to generic job form via HTTP"""
-        # For now, this is a placeholder that suggests manual application
-        # In the future, we could add form parsing and submission logic
-        return {
-            'job_id': job.id,
-            'success': False,
-            'error': 'Generic form applications require manual submission - please apply manually',
-            'method': 'http_generic',
-            'manual_application_required': True,
-            'message': f'Please visit the application URL to apply: {getattr(job, "apply_url", "")}'
-        }
+        """Apply to generic job form via HTTP - ACTUAL WORKING FORM SUBMISSION"""
+        try:
+            from bs4 import BeautifulSoup
+            import re
+            from urllib.parse import urljoin, urlparse
+            
+            apply_url = getattr(job, 'apply_url', '')
+            soup = BeautifulSoup(page_content, 'html.parser')
+            
+            # Find the first form on the page
+            form = soup.find('form')
+            if not form:
+                return {
+                    'job_id': job.id,
+                    'success': False,
+                    'error': 'No form found on application page',
+                    'method': 'http_form'
+                }
+            
+            # Get form action URL
+            form_action = form.get('action', '')
+            if form_action:
+                if form_action.startswith('/'):
+                    # Relative URL
+                    parsed_url = urlparse(apply_url)
+                    form_action = f"{parsed_url.scheme}://{parsed_url.netloc}{form_action}"
+                elif not form_action.startswith('http'):
+                    # Relative to current page
+                    form_action = urljoin(apply_url, form_action)
+            else:
+                form_action = apply_url
+            
+            # Build form data by analyzing input fields
+            form_data = {}
+            
+            # Find all input fields, textareas, and selects
+            form_fields = form.find_all(['input', 'textarea', 'select'])
+            
+            for field in form_fields:
+                field_name = field.get('name', '')
+                field_type = field.get('type', 'text')
+                
+                # Skip buttons, hidden fields, and files for now
+                if field_type in ['submit', 'button', 'file', 'hidden']:
+                    continue
+                
+                if not field_name:
+                    continue
+                
+                # Smart field mapping based on common patterns
+                field_value = self._get_field_value(field_name, field, user_profile, job, cover_letter)
+                
+                if field_value:
+                    form_data[field_name] = field_value
+                    logger.info(f"Mapped field '{field_name}' = '{field_value[:50]}...'")
+            
+            # Add any hidden fields that might be required
+            hidden_fields = form.find_all('input', {'type': 'hidden'})
+            for hidden in hidden_fields:
+                name = hidden.get('name', '')
+                value = hidden.get('value', '')
+                if name and value:
+                    form_data[name] = value
+            
+            logger.info(f"Submitting form to: {form_action}")
+            logger.info(f"Form data fields: {list(form_data.keys())}")
+            
+            # Submit the form
+            method = form.get('method', 'post').lower()
+            if method == 'post':
+                response = self.session.post(form_action, data=form_data)
+            else:
+                response = self.session.get(form_action, params=form_data)
+            
+            # Check if submission was successful
+            success_indicators = [
+                'thank you', 'application received', 'successfully submitted',
+                'application complete', 'thank you for applying', 
+                'your application', 'we have received', 'submission successful'
+            ]
+            
+            response_text = response.text.lower()
+            is_success = any(indicator in response_text for indicator in success_indicators)
+            
+            # Also check for redirect to thank you page
+            if response.status_code in [200, 302] and (
+                '/thank' in response.url.lower() or 
+                '/success' in response.url.lower() or
+                '/complete' in response.url.lower()
+            ):
+                is_success = True
+            
+            if is_success:
+                logger.info(f"✅ FORM SUCCESSFULLY SUBMITTED for job {job.id}")
+                return {
+                    'job_id': job.id,
+                    'success': True,
+                    'method': 'http_form',
+                    'message': f'✅ Application successfully submitted via form to {job.company}',
+                    'form_url': form_action,
+                    'response_url': response.url,
+                    'fields_submitted': list(form_data.keys())
+                }
+            else:
+                # Form submitted but no clear success indication
+                return {
+                    'job_id': job.id,
+                    'success': False,
+                    'error': 'Form submitted but success not confirmed - may have been successful',
+                    'method': 'http_form',
+                    'form_url': form_action,
+                    'response_status': response.status_code,
+                    'manual_verification_needed': True
+                }
+                
+        except Exception as e:
+            logger.error(f"HTTP form submission failed for job {job.id}: {e}")
+            return {
+                'job_id': job.id,
+                'success': False,
+                'error': f'Form submission failed: {str(e)}',
+                'method': 'http_form'
+            }
+    
+    def _get_field_value(self, field_name: str, field_element, user_profile: Dict, job, cover_letter: str) -> str:
+        """Smart field value mapping based on field name patterns"""
+        field_name_lower = field_name.lower()
+        
+        # Name fields
+        if any(pattern in field_name_lower for pattern in ['name', 'fullname', 'full_name', 'applicant_name']):
+            return user_profile.get('name', '')
+        
+        # First name
+        if any(pattern in field_name_lower for pattern in ['firstname', 'first_name', 'fname']):
+            name = user_profile.get('name', '')
+            return name.split()[0] if name else ''
+        
+        # Last name  
+        if any(pattern in field_name_lower for pattern in ['lastname', 'last_name', 'lname', 'surname']):
+            name = user_profile.get('name', '')
+            return ' '.join(name.split()[1:]) if name and len(name.split()) > 1 else ''
+        
+        # Email fields
+        if any(pattern in field_name_lower for pattern in ['email', 'e_mail', 'mail']):
+            return user_profile.get('email', '')
+        
+        # Phone fields
+        if any(pattern in field_name_lower for pattern in ['phone', 'telephone', 'mobile', 'contact']):
+            return user_profile.get('phone', '')
+        
+        # Cover letter / message fields
+        if any(pattern in field_name_lower for pattern in [
+            'cover', 'letter', 'message', 'motivation', 'why', 'interest', 
+            'additional', 'comments', 'notes', 'description'
+        ]):
+            return cover_letter
+        
+        # Position/job title fields
+        if any(pattern in field_name_lower for pattern in ['position', 'job', 'role', 'title']):
+            return getattr(job, 'title', '')
+        
+        # Resume/CV fields (text, not file upload)
+        if any(pattern in field_name_lower for pattern in ['resume', 'cv']) and field_element.name != 'input':
+            return f"Please find my resume attached. {cover_letter}"
+        
+        # LinkedIn fields
+        if 'linkedin' in field_name_lower:
+            return user_profile.get('linkedin_url', '')
+        
+        # Portfolio/website fields
+        if any(pattern in field_name_lower for pattern in ['portfolio', 'website', 'url', 'link']):
+            return user_profile.get('portfolio_url', '')
+        
+        # Salary expectation fields
+        if any(pattern in field_name_lower for pattern in ['salary', 'expected', 'compensation']):
+            return user_profile.get('expected_salary', 'Negotiable')
+        
+        # Available start date
+        if any(pattern in field_name_lower for pattern in ['start', 'available', 'date']):
+            return user_profile.get('start_date', 'Immediately')
+        
+        # Generic text fields - use cover letter
+        if field_element.name == 'textarea':
+            return cover_letter
+        
+        return ''
     
     async def _apply_linkedin(self, user_profile: Dict, job, cover_letter: str) -> Dict:
         """Apply to LinkedIn job"""
@@ -505,7 +781,7 @@ class AutoApplyAgent:
         }
     
     async def _apply_via_email(self, user_profile: Dict, job, cover_letter: str) -> Dict:
-        """Apply via email"""
+        """Apply via email - ACTUAL WORKING EMAIL SENDER"""
         try:
             # Extract email from apply_url (mailto: links)
             apply_url = job.apply_url
@@ -522,31 +798,156 @@ class AutoApplyAgent:
             # Create email
             subject = f"Application for {job.title} at {job.company}"
             
-            # Send email
-            await self._send_application_email(
+            # Send email using SMTP
+            email_result = await self._send_application_email(
                 recipient_email,
                 subject,
                 cover_letter,
                 user_profile
             )
             
-            return {
-                'job_id': job.id,
-                'success': True,
-                'method': 'email',
-                'message': f'Application sent via email to {recipient_email}'
-            }
+            if email_result['success']:
+                logger.info(f"✅ REAL EMAIL SENT to {recipient_email} for job {job.id}")
+                return {
+                    'job_id': job.id,
+                    'success': True,
+                    'method': 'email',
+                    'message': f'✅ Application successfully sent via email to {recipient_email}',
+                    'recipient': recipient_email,
+                    'timestamp': email_result.get('timestamp'),
+                    'email_id': email_result.get('email_id')
+                }
+            else:
+                return {
+                    'job_id': job.id,
+                    'success': False,
+                    'error': f'Email sending failed: {email_result["error"]}',
+                    'method': 'email'
+                }
             
         except Exception as e:
+            logger.error(f"Email application failed for job {job.id}: {str(e)}")
             return {
                 'job_id': job.id,
                 'success': False,
-                'error': str(e),
+                'error': f'Email application exception: {str(e)}',
                 'method': 'email'
             }
     
     async def _send_application_email(self, recipient: str, subject: str, 
-                                    cover_letter: str, user_profile: Dict):
+                                    cover_letter: str, user_profile: Dict) -> Dict:
+        """ACTUAL WORKING SMTP EMAIL SENDER"""
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.base import MIMEBase
+            from email import encoders
+            import os
+            from datetime import datetime
+            
+            # Get SMTP settings from user profile or environment
+            smtp_host = user_profile.get('smtp_host', os.getenv('SMTP_HOST', 'smtp.gmail.com'))
+            smtp_port = int(user_profile.get('smtp_port', os.getenv('SMTP_PORT', '587')))
+            sender_email = user_profile.get('email', os.getenv('SENDER_EMAIL'))
+            sender_password = user_profile.get('email_password', os.getenv('SENDER_PASSWORD'))
+            
+            if not sender_email or not sender_password:
+                return {
+                    'success': False,
+                    'error': 'Missing email credentials. Please configure SMTP settings in your profile.'
+                }
+            
+            # Create email message
+            msg = MIMEMultipart()
+            msg['From'] = f"{user_profile.get('name', 'Job Applicant')} <{sender_email}>"
+            msg['To'] = recipient
+            msg['Subject'] = subject
+            
+            # Create professional email body
+            email_body = f"""Dear Hiring Manager,
+
+I hope this email finds you well. I am writing to express my strong interest in the {user_profile.get('target_position', 'position')} role at your organization.
+
+{cover_letter}
+
+I have attached my resume for your review and would welcome the opportunity to discuss how my background and skills align with your team's needs.
+
+Thank you for your time and consideration. I look forward to hearing from you.
+
+Best regards,
+{user_profile.get('name', 'N/A')}
+{user_profile.get('phone', '')}
+{sender_email}
+
+---
+This application was sent via SkillNavigator Auto-Apply System
+"""
+            
+            # Attach email body
+            msg.attach(MIMEText(email_body, 'plain'))
+            
+            # Attach resume if available
+            resume_path = user_profile.get('resume_path')
+            if resume_path and os.path.exists(resume_path):
+                try:
+                    with open(resume_path, "rb") as attachment:
+                        part = MIMEBase('application', 'octet-stream')
+                        part.set_payload(attachment.read())
+                        
+                    encoders.encode_base64(part)
+                    part.add_header(
+                        'Content-Disposition',
+                        f'attachment; filename= {os.path.basename(resume_path)}',
+                    )
+                    msg.attach(part)
+                    logger.info(f"Resume attached: {resume_path}")
+                except Exception as e:
+                    logger.warning(f"Could not attach resume: {e}")
+            
+            # Send email via SMTP
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()  # Enable TLS encryption
+                server.login(sender_email, sender_password)
+                
+                text = msg.as_string()
+                server.sendmail(sender_email, recipient, text)
+                
+                logger.info(f"✅ EMAIL SUCCESSFULLY SENT to {recipient}")
+                
+                return {
+                    'success': True,
+                    'timestamp': datetime.now().isoformat(),
+                    'recipient': recipient,
+                    'sender': sender_email,
+                    'email_id': f"job_app_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    'message': f'Email sent successfully to {recipient}'
+                }
+                
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"SMTP Authentication failed: {e}")
+            return {
+                'success': False,
+                'error': 'Email authentication failed. Check your email credentials.'
+            }
+        except smtplib.SMTPRecipientsRefused as e:
+            logger.error(f"Recipient email refused: {e}")
+            return {
+                'success': False,
+                'error': f'Recipient email {recipient} was refused by the server.'
+            }
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error occurred: {e}")
+            return {
+                'success': False,
+                'error': f'Email sending failed: {str(e)}'
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error sending email: {e}")
+            return {
+                'success': False,
+                'error': f'Unexpected email error: {str(e)}'
+            }
         """Send application email"""
         
         # Email configuration
@@ -709,31 +1110,243 @@ class AutoApplyAgent:
     
     async def _check_existing_application(self, user_id: int, job_id: int) -> bool:
         """Check if user has already applied to this job"""
-        # This would check the database for existing applications
-        # For now, return False
-        return False
+        try:
+            from database.db_connection import get_db
+            from sqlalchemy.orm import Session
+            from database.db_connection import JobApplication
+            
+            # Create a database session
+            db_gen = get_db()
+            db: Session = next(db_gen)
+            
+            try:
+                # Query for existing application
+                existing_app = db.query(JobApplication).filter(
+                    JobApplication.user_id == user_id,
+                    JobApplication.job_id == job_id
+                ).first()
+                
+                return existing_app is not None
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error checking existing application: {e}")
+            # Return False to allow application attempt (fail-safe)
+            return False
     
     async def _record_application(self, user_id: int, job_id: int, application_result: Dict):
         """Record application in database"""
-        application_data = {
-            'user_id': user_id,
-            'job_id': job_id,
-            'applied_at': datetime.utcnow(),
-            'status': 'applied',
-            'cover_letter': application_result.get('cover_letter', ''),
-            'auto_applied': True,
-            'application_method': application_result.get('method', 'unknown'),
-            'notes': application_result.get('message', '')
-        }
-        
-        # This would save to database
-        logger.info(f"Recorded application for user {user_id} to job {job_id}")
+        try:
+            from database.db_connection import get_db
+            from sqlalchemy.orm import Session
+            from database.db_connection import JobApplication
+            from datetime import datetime
+            
+            # Create a database session
+            db_gen = get_db()
+            db: Session = next(db_gen)
+            
+            try:
+                # Create new job application record
+                new_application = JobApplication(
+                    user_id=user_id,
+                    job_id=job_id,
+                    applied_at=datetime.utcnow(),
+                    status="applied" if application_result['success'] else "failed",
+                    cover_letter=application_result.get('cover_letter', ''),
+                    auto_applied=True,
+                    application_method=application_result.get('method', 'auto'),
+                    notes=f"Auto-applied using {application_result.get('method', 'unknown')} method. "
+                          f"Attempts: {application_result.get('attempts_made', 1)}. "
+                          f"Cover letter generated automatically."
+                )
+                
+                # Add error details if failed
+                if not application_result['success']:
+                    new_application.status = "failed"
+                    new_application.notes += f" Error: {application_result.get('error', 'Unknown error')}"
+                
+                db.add(new_application)
+                db.commit()
+                
+                logger.info(f"Successfully recorded application: User {user_id} -> Job {job_id}")
+                
+            except Exception as db_error:
+                db.rollback()
+                logger.error(f"Database error recording application: {db_error}")
+                raise
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error recording application: {e}")
+            # Don't raise exception here to avoid breaking the application flow
     
     async def _get_applications_today(self) -> int:
         """Get number of applications made today"""
-        # This would query the database for today's applications
-        # For now, return 0
-        return 0
+        try:
+            from database.db_connection import get_db
+            from sqlalchemy.orm import Session
+            from database.db_connection import JobApplication
+            from datetime import datetime, date
+            
+            # Create a database session
+            db_gen = get_db()
+            db: Session = next(db_gen)
+            
+            try:
+                # Get today's date
+                today_start = datetime.combine(date.today(), datetime.min.time())
+                
+                # Query for applications made today by auto-apply
+                count = db.query(JobApplication).filter(
+                    JobApplication.auto_applied == True,
+                    JobApplication.applied_at >= today_start
+                ).count()
+                
+                return count
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error getting today's applications count: {e}")
+            return 0
+    
+    async def get_auto_apply_analytics(self, user_id: int = None, days: int = 30) -> Dict:
+        """Get comprehensive analytics for auto-apply performance"""
+        try:
+            from database.db_connection import get_db
+            from sqlalchemy.orm import Session
+            from database.db_connection import JobApplication, Job
+            from datetime import datetime, timedelta
+            from sqlalchemy import func, and_
+            
+            db_gen = get_db()
+            db: Session = next(db_gen)
+            
+            try:
+                # Date filter
+                cutoff_date = datetime.utcnow() - timedelta(days=days)
+                
+                # Base query for auto-applied jobs
+                base_query = db.query(JobApplication).filter(
+                    JobApplication.auto_applied == True,
+                    JobApplication.applied_at >= cutoff_date
+                )
+                
+                if user_id:
+                    base_query = base_query.filter(JobApplication.user_id == user_id)
+                
+                # Total statistics
+                total_auto_applications = base_query.count()
+                successful_applications = base_query.filter(JobApplication.status == 'applied').count()
+                
+                # Method performance analysis
+                method_stats = {}
+                methods = db.query(JobApplication.application_method, 
+                                 func.count(JobApplication.id).label('count'),
+                                 func.sum(func.case([(JobApplication.status == 'applied', 1)], else_=0)).label('successes')
+                                ).filter(
+                    JobApplication.auto_applied == True,
+                    JobApplication.applied_at >= cutoff_date
+                ).group_by(JobApplication.application_method).all()
+                
+                for method, count, successes in methods:
+                    method_stats[method] = {
+                        'total_attempts': count,
+                        'successes': successes or 0,
+                        'success_rate': (successes or 0) / count if count > 0 else 0
+                    }
+                
+                # Daily application trend
+                daily_stats = db.query(
+                    func.date(JobApplication.applied_at).label('date'),
+                    func.count(JobApplication.id).label('applications')
+                ).filter(
+                    JobApplication.auto_applied == True,
+                    JobApplication.applied_at >= cutoff_date
+                ).group_by(func.date(JobApplication.applied_at)).order_by('date').all()
+                
+                # Top performing job sources
+                source_stats = db.query(
+                    Job.source,
+                    func.count(JobApplication.id).label('applications'),
+                    func.sum(func.case([(JobApplication.status == 'applied', 1)], else_=0)).label('successes')
+                ).join(Job, JobApplication.job_id == Job.id).filter(
+                    JobApplication.auto_applied == True,
+                    JobApplication.applied_at >= cutoff_date
+                ).group_by(Job.source).all()
+                
+                # Calculate overall metrics
+                overall_success_rate = (successful_applications / total_auto_applications) if total_auto_applications > 0 else 0
+                
+                # Generate recommendations
+                recommendations = self._generate_auto_apply_recommendations(method_stats, overall_success_rate)
+                
+                return {
+                    'period_days': days,
+                    'total_auto_applications': total_auto_applications,
+                    'successful_applications': successful_applications,
+                    'overall_success_rate': round(overall_success_rate * 100, 2),
+                    'method_performance': method_stats,
+                    'daily_trend': [{'date': str(date), 'applications': apps} for date, apps in daily_stats],
+                    'source_performance': [
+                        {
+                            'source': source, 
+                            'applications': apps, 
+                            'successes': succ or 0,
+                            'success_rate': round((succ or 0) / apps * 100, 2) if apps > 0 else 0
+                        } 
+                        for source, apps, succ in source_stats
+                    ],
+                    'recommendations': recommendations,
+                    'in_memory_stats': self.method_stats,
+                    'current_session_applications': self.applications_today
+                }
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error generating auto-apply analytics: {e}")
+            return {
+                'error': str(e),
+                'in_memory_stats': self.method_stats,
+                'current_session_applications': self.applications_today
+            }
+    
+    def _generate_auto_apply_recommendations(self, method_stats: Dict, overall_success_rate: float) -> List[str]:
+        """Generate recommendations based on performance data"""
+        recommendations = []
+        
+        if overall_success_rate < 0.2:
+            recommendations.append("⚠️ Low overall success rate (<20%). Consider reviewing job matching criteria.")
+        
+        # Find best performing method
+        best_method = None
+        best_rate = 0
+        for method, stats in method_stats.items():
+            if stats['total_attempts'] >= 3 and stats['success_rate'] > best_rate:
+                best_method = method
+                best_rate = stats['success_rate']
+        
+        if best_method and best_rate > 0.5:
+            recommendations.append(f"✅ {best_method} method performing well ({best_rate*100:.1f}% success). Prioritize this method.")
+        
+        # Find underperforming methods
+        for method, stats in method_stats.items():
+            if stats['total_attempts'] >= 5 and stats['success_rate'] < 0.1:
+                recommendations.append(f"⚠️ {method} method has low success rate ({stats['success_rate']*100:.1f}%). Consider improvements.")
+        
+        if not recommendations:
+            recommendations.append("📊 Auto-apply performance looks good. Continue monitoring.")
+        
+        recommendations.append("💡 Tip: Higher match scores typically lead to better application success rates.")
+        
+        return recommendations
     
     def is_healthy(self) -> bool:
         """Check if the auto-apply agent is healthy"""

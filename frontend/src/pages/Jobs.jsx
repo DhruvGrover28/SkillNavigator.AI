@@ -129,8 +129,31 @@ const Jobs = () => {
               <option value="senior">Senior Level</option>
               <option value="lead">Lead/Principal</option>
             </select>
+
+            <select
+              value={filters.minScore}
+              onChange={(e) => handleFilterChange('minScore', e.target.value)}
+              className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm dark:bg-gray-700 dark:text-white"
+            >
+              <option value="">All Matches</option>
+              <option value="80">Excellent Match (80%+)</option>
+              <option value="65">Good Match (65%+)</option>
+              <option value="40">Fair Match (40%+)</option>
+            </select>
           </div>
         </div>
+
+        {/* Results Header */}
+        {!loading && jobs.length > 0 && (
+          <div className="flex justify-between items-center mb-4 px-1">
+            <div className="text-sm text-gray-600 dark:text-gray-300">
+              Showing {jobs.length} jobs sorted by match score
+            </div>
+            <div className="text-xs text-gray-500">
+              AI-filtered and personalized results
+            </div>
+          </div>
+        )}
 
         {/* Job Results */}
         <div className="grid gap-6">

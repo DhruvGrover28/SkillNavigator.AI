@@ -12,11 +12,10 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 from database.db_connection import Database
-from routes import jobs, user, tracker
+from routes import jobs, user, tracker, supervisor
 from agents.simple_supervisor_agent import SimpleSupervisorAgent
 
 # Load environment variables
@@ -78,11 +77,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration
-origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+# CORS configuration - Allow all origins for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip().strip('"') for origin in origins],
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -92,30 +90,18 @@ app.add_middleware(
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(tracker.router, prefix="/api/tracker", tags=["tracker"])
 app.include_router(user.router, prefix="/api/user", tags=["user"])
+app.include_router(supervisor.router)  # No prefix needed, already defined in router
 
-# Serve static files from React build
-frontend_dist_path = "../frontend/dist"
-if os.path.exists(frontend_dist_path):
-    # Serve static assets (JS, CSS, images)
-    app.mount("/assets", StaticFiles(directory=f"{frontend_dist_path}/assets"), name="assets")
-    
-    # Serve the React app for all non-API routes
-    @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
-        """Serve React frontend for all non-API routes"""
-        # If it's an API route, let FastAPI handle it normally
-        if full_path.startswith("api/"):
-            raise HTTPException(status_code=404, detail="API endpoint not found")
-        
-        # For all other routes, serve the React index.html
-        return FileResponse(f"{frontend_dist_path}/index.html")
+# Import and include auto-apply router
+from routes import auto_apply
+app.include_router(auto_apply.router, prefix="/api/auto-apply", tags=["auto-apply"])
 
-# Legacy static files support
+# Serve static files
 if os.path.exists("../public"):
     app.mount("/static", StaticFiles(directory="../public"), name="static")
 
 
-@app.get("/api")
+@app.get("/")
 async def root():
     """Root endpoint with API information"""
     return {
@@ -228,9 +214,9 @@ async def internal_error_handler(request, exc):
 
 if __name__ == "__main__":
     # Development server
-    host = os.getenv("HOST", "0.0.0.0")
+    host = os.getenv("HOST", "localhost")
     port = int(os.getenv("PORT", 8000))
-    debug = os.getenv("DEBUG", "false").lower() == "true"
+    debug = os.getenv("DEBUG", "true").lower() == "true"
     
     logger.info(f"Starting server on {host}:{port}")
     

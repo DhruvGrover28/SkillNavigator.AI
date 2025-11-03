@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MapPin, Building, Calendar, ExternalLink, CheckCircle, AlertCircle } from 'lucide-react';
+import { MapPin, Building, Calendar, ExternalLink } from 'lucide-react';
 import ScoreTag from './ScoreTag';
 
 const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
@@ -18,7 +18,6 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
     application_url,
     apply_url, // Also check for apply_url from backend
     match_score,
-    skillMatchScore, // New skill match score from scoring agent
     status
   } = job;
 
@@ -69,7 +68,12 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
         </div>
         
         <div className="flex flex-col items-end space-y-2">
-          <ScoreTag score={skillMatchScore || match_score} />
+          <ScoreTag 
+            score={match_score} 
+            classification={job.classification}
+            showLabel={true}
+            size="normal"
+          />
           {status && (
             <span className={`badge ${getStatusColor(status)}`}>
               {status}
@@ -84,52 +88,33 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
         </p>
       </div>
 
-      {/* Skills Analysis Section */}
-      {(job.matchingSkills || job.missingSkills) && (
-        <div className="mb-4 p-3 bg-gray-50 rounded-lg border">
-          <h4 className="text-sm font-medium text-gray-900 mb-3">Skills Analysis</h4>
-          
-          {/* Matching Skills */}
-          {job.matchingSkills && job.matchingSkills.length > 0 && (
-            <div className="mb-3">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="w-4 h-4 text-green-600" />
-                <span className="text-sm font-medium text-green-700">
-                  Skills You Have ({job.matchingSkills.length})
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {job.matchingSkills.map((skill, index) => (
-                  <span 
-                    key={index} 
-                    className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full border border-green-200"
-                  >
-                    {skill}
-                  </span>
-                ))}
+      {/* AI Score Breakdown */}
+      {job.score_breakdown && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="text-xs font-semibold text-gray-700 mb-2">Match Analysis</div>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="text-center">
+              <div className="font-medium text-gray-600">Skills</div>
+              <div className="text-lg font-bold text-blue-600">
+                {Math.round(job.score_breakdown.skills)}%
               </div>
             </div>
-          )}
-
-          {/* Missing Skills */}
-          {job.missingSkills && job.missingSkills.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <AlertCircle className="w-4 h-4 text-orange-600" />
-                <span className="text-sm font-medium text-orange-700">
-                  Skills to Develop ({job.missingSkills.length})
-                </span>
+            <div className="text-center">
+              <div className="font-medium text-gray-600">Experience</div>
+              <div className="text-lg font-bold text-green-600">
+                {Math.round(job.score_breakdown.experience)}%
               </div>
-              <div className="flex flex-wrap gap-1">
-                {job.missingSkills.map((skill, index) => (
-                  <span 
-                    key={index} 
-                    className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full border border-orange-200"
-                  >
-                    {skill}
-                  </span>
-                ))}
+            </div>
+            <div className="text-center">
+              <div className="font-medium text-gray-600">Education</div>
+              <div className="text-lg font-bold text-purple-600">
+                {Math.round(job.score_breakdown.education)}%
               </div>
+            </div>
+          </div>
+          {job.score_explanation && (
+            <div className="mt-2 text-xs text-gray-600 border-t border-gray-200 pt-2">
+              {job.score_explanation}
             </div>
           )}
         </div>
@@ -189,31 +174,58 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
                   const result = await response.json();
                   
                   if (response.ok && result.success) {
-                    alert(`✅ Successfully applied to ${title} at ${company}!\n\nMethod: ${result.method}\nStatus: ${result.status}`);
-                    // Optionally update job status in parent component
+                    // Enhanced success notification
+                    const successMessage = `✅ Successfully Applied!\n\n` +
+                      `Job: ${title}\n` +
+                      `Company: ${company}\n` +
+                      `Method: ${result.method || 'Auto'}\n` +
+                      `Status: ${result.status}\n\n` +
+                      `${result.attempts_made ? `Attempts: ${result.attempts_made}\n` : ''}` +
+                      `Your application has been submitted and tracked automatically.`;
+                    
+                    alert(successMessage);
+                    
+                    // Update job status in parent component
                     if (onStatusUpdate) {
                       onStatusUpdate(id, 'applied');
                     }
                   } else {
-                    // Handle the specific case where auto-apply isn't available
-                    if (result.reason === "Browser not available") {
-                      alert(`🤖 Auto-Apply Currently Unavailable\n\n` +
-                            `Unfortunately, automatic job application is temporarily limited due to technical constraints.\n\n` +
-                            `You can still apply manually by clicking "Visit Job" to go directly to the job posting.\n\n` +
-                            `Job: ${title} at ${company}`);
+                    // Enhanced error handling with helpful suggestions
+                    let errorMessage = `❌ Auto-Apply Failed\n\n`;
+                    
+                    if (result.reason === "Browser not available" || result.error?.includes("not available")) {
+                      errorMessage += `🤖 Auto-Apply Service Temporarily Unavailable\n\n` +
+                                    `The automated application system is currently limited due to technical constraints.\n\n` +
+                                    `📋 What you can do:\n` +
+                                    `• Click "Visit Job" to apply manually\n` +
+                                    `• Save this job for later\n` +
+                                    `• Check back later for auto-apply availability\n\n` +
+                                    `Job: ${title} at ${company}`;
+                    } else if (result.methods_tried && result.methods_tried.length > 1) {
+                      errorMessage += `Multiple application methods were attempted but none succeeded.\n\n` +
+                                    `Methods tried: ${result.methods_tried.join(', ')}\n` +
+                                    `Total attempts: ${result.total_attempts || 'Unknown'}\n\n` +
+                                    `Error: ${result.error || 'Unknown error'}\n\n` +
+                                    `💡 Try applying manually via "Visit Job"`;
                     } else {
-                      alert(`🤖 Auto-Apply Temporarily Unavailable\n\n` +
-                            `We're currently experiencing technical difficulties with automatic applications.\n\n` +
-                            `Please apply manually by clicking "Visit Job" to go directly to the company's job posting.\n\n` +
-                            `Job: ${title} at ${company}`);
+                      errorMessage += `Failed to apply to ${title}\n\n` +
+                                    `Method: ${result.method || 'Unknown'}\n` +
+                                    `Error: ${result.error || result.message || result.reason || 'Unknown error'}\n\n` +
+                                    `💡 You can still apply manually by clicking "Visit Job"`;
                     }
+                    
+                    alert(errorMessage);
                   }
                 } catch (error) {
                   console.error('Auto-apply error:', error);
-                  alert(`🤖 Auto-Apply Temporarily Unavailable\n\n` +
-                        `We're currently experiencing technical difficulties with automatic applications.\n\n` +
-                        `Please apply manually by clicking "Visit Job" to go directly to the company's job posting.\n\n` +
-                        `Job: ${title} at ${company}`);
+                  const errorMessage = `❌ Auto-Apply System Error\n\n` +
+                                      `Job: ${title} at ${company}\n` +
+                                      `Error: ${error.message}\n\n` +
+                                      `🔧 This appears to be a system issue. Please try:\n` +
+                                      `• Refreshing the page\n` +
+                                      `• Trying again in a few minutes\n` +
+                                      `• Applying manually via "Visit Job"`;
+                  alert(errorMessage);
                 } finally {
                   setIsApplying(false);
                 }
@@ -222,17 +234,23 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
               className={`${
                 isApplying 
                   ? 'bg-gray-400 cursor-not-allowed' 
-                  : 'bg-green-600 hover:bg-green-700'
-              } text-white px-4 py-2 text-sm rounded-lg inline-flex items-center transition-colors`}
-              title="Auto-apply using AI agent"
+                  : match_score && match_score >= 80 
+                    ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700' 
+                    : 'bg-green-600 hover:bg-green-700'
+              } text-white px-4 py-2 text-sm rounded-lg inline-flex items-center transition-all duration-300 shadow-md hover:shadow-lg`}
+              title={`Auto-apply using AI agent${match_score ? ` (${match_score}% match)` : ''}`}
             >
               {isApplying ? (
                 <>
-                  <span className="animate-spin mr-1">⏳</span>
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
                   Applying...
                 </>
               ) : (
-                'Auto Apply'
+                <>
+                  <span className="mr-1">🤖</span>
+                  Auto Apply
+                  {match_score && match_score >= 80 && <span className="ml-1 text-xs">⭐</span>}
+                </>
               )}
             </button>
           )}
