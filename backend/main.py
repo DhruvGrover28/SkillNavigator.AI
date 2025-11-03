@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from database.db_connection import Database
-from routes import jobs, user, tracker, supervisor
 from agents.simple_supervisor_agent import SimpleSupervisorAgent
 
 # Load environment variables
@@ -86,19 +85,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
-app.include_router(tracker.router, prefix="/api/tracker", tags=["tracker"])
-app.include_router(user.router, prefix="/api/user", tags=["user"])
-app.include_router(supervisor.router)  # No prefix needed, already defined in router
+# Include routers with safe imports
+try:
+    from routes import jobs
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+    logger.info("Jobs router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Jobs router not available: {e}")
 
-# Import and include auto-apply router
-from routes import auto_apply
-app.include_router(auto_apply.router, prefix="/api/auto-apply", tags=["auto-apply"])
+try:
+    from routes import tracker
+    app.include_router(tracker.router, prefix="/api/tracker", tags=["tracker"])
+    logger.info("Tracker router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Tracker router not available: {e}")
 
-# Serve static files
-if os.path.exists("../public"):
-    app.mount("/static", StaticFiles(directory="../public"), name="static")
+try:
+    from routes import user
+    app.include_router(user.router, prefix="/api/user", tags=["user"])
+    logger.info("User router loaded successfully")
+except ImportError as e:
+    logger.warning(f"User router not available: {e}")
+
+try:
+    from routes import supervisor
+    app.include_router(supervisor.router)  # No prefix needed, already defined in router
+    logger.info("Supervisor router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Supervisor router not available: {e}")
+
+try:
+    from routes import auto_apply
+    app.include_router(auto_apply.router, prefix="/api/auto-apply", tags=["auto-apply"])
+    logger.info("Auto-apply router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Auto-apply router not available: {e}")
+
+# Serve static files (only if directory exists)
+try:
+    if os.path.exists("../public"):
+        app.mount("/static", StaticFiles(directory="../public"), name="static")
+        logger.info("Static files mounted successfully")
+    else:
+        logger.info("Public directory not found - skipping static file serving")
+except Exception as e:
+    logger.warning(f"Could not mount static files: {e}")
 
 
 @app.get("/")
@@ -108,9 +139,14 @@ async def root():
         "message": "SkillNavigator API",
         "version": "1.0.0",
         "description": "AI-Powered Multi-Agent Job Application Platform",
-        "docs": "/api/docs",
+        "docs": "/docs",
         "status": "running"
     }
+
+@app.head("/")
+async def root_head():
+    """HEAD request handler for deployment health checks"""
+    return {}
 
 
 @app.get("/api/health")
@@ -213,10 +249,10 @@ async def internal_error_handler(request, exc):
 
 
 if __name__ == "__main__":
-    # Development server
-    host = os.getenv("HOST", "localhost")
+    # Production/Development server
+    host = os.getenv("HOST", "0.0.0.0")  # Default to 0.0.0.0 for deployment
     port = int(os.getenv("PORT", 8000))
-    debug = os.getenv("DEBUG", "true").lower() == "true"
+    debug = os.getenv("DEBUG", "false").lower() == "true"  # Default to false for production
     
     logger.info(f"Starting server on {host}:{port}")
     
