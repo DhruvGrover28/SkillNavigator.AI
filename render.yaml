@@ -1,0 +1,20 @@
+services:
+  # Backend API Service
+  - type: web
+    name: skillnavigator-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+    plan: free
+    
+  # Frontend Web Service
+  - type: web
+    name: skillnavigator-frontend
+    env: node
+    buildCommand: "cd frontend && npm install && npm run build"
+    startCommand: "cd frontend && npm run preview -- --host 0.0.0.0 --port $PORT"
+    plan: free
+    routes:
+      - type: redirect
+        source: /*
+        destination: https://skillnavigator-frontend.onrender.com/$1

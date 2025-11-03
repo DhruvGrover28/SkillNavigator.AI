@@ -121,15 +121,40 @@ try:
 except ImportError as e:
     logger.warning(f"Auto-apply router not available: {e}")
 
-# Serve static files (only if directory exists)
+# Serve static files (React build and public assets)
 try:
-    if os.path.exists("../public"):
+    # Serve React app build files
+    if os.path.exists("../frontend/dist"):
+        app.mount("/static", StaticFiles(directory="../frontend/dist/assets"), name="static")
+        logger.info("Frontend static assets mounted successfully")
+    elif os.path.exists("../public"):
         app.mount("/static", StaticFiles(directory="../public"), name="static")
-        logger.info("Static files mounted successfully")
+        logger.info("Public static files mounted successfully")
     else:
-        logger.info("Public directory not found - skipping static file serving")
+        logger.info("No static directory found - skipping static file serving")
 except Exception as e:
     logger.warning(f"Could not mount static files: {e}")
+
+# Serve React app for all non-API routes (SPA fallback)
+try:
+    if os.path.exists("../frontend/dist/index.html"):
+        from fastapi.responses import FileResponse
+        
+        @app.get("/{path:path}")
+        async def serve_react_app(path: str):
+            """Serve React app for all non-API routes"""
+            # If it's an API route, let it fall through to 404
+            if path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="API endpoint not found")
+            
+            # For all other routes, serve the React app
+            return FileResponse("../frontend/dist/index.html")
+            
+        logger.info("React SPA fallback configured successfully")
+    else:
+        logger.info("React build not found - skipping SPA fallback")
+except Exception as e:
+    logger.warning(f"Could not configure React SPA fallback: {e}")
 
 
 @app.get("/")

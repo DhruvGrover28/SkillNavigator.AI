@@ -8,7 +8,9 @@
     "backend": "cd backend && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
     "frontend": "cd frontend && npm run dev",
     "install-all": "cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
-    "build": "cd frontend && npm run build"
+    "build": "cd frontend && npm install && npm run build",
+    "build-backend": "pip install -r requirements.txt",
+    "start": "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
   },
   "workspaces": [
     "frontend"
