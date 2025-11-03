@@ -1,4 +1,4 @@
-# Deployment-compatible requirements (Python 3.11)
+# Deployment-compatible requirements (Python 3.11/3.12)
 # Core FastAPI dependencies
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
