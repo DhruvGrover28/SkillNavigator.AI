@@ -135,38 +135,78 @@ try:
 except Exception as e:
     logger.warning(f"Could not mount static files: {e}")
 
-# Serve React app for all non-API routes (SPA fallback)
+# Handle asset requests properly (no catch-all route that conflicts)
+# Only serve React app if it exists, otherwise let routes handle normally
 try:
     if os.path.exists("../frontend/dist/index.html"):
         from fastapi.responses import FileResponse
-        
-        @app.get("/{path:path}")
-        async def serve_react_app(path: str):
-            """Serve React app for all non-API routes"""
-            # If it's an API route, let it fall through to 404
-            if path.startswith("api/"):
-                raise HTTPException(status_code=404, detail="API endpoint not found")
-            
-            # For all other routes, serve the React app
-            return FileResponse("../frontend/dist/index.html")
-            
-        logger.info("React SPA fallback configured successfully")
+        logger.info("React build found - could serve SPA if needed")
     else:
-        logger.info("React build not found - skipping SPA fallback")
+        logger.info("React build not found - using API-only mode")
 except Exception as e:
-    logger.warning(f"Could not configure React SPA fallback: {e}")
+    logger.warning(f"Could not check for React build: {e}")
 
 
 @app.get("/")
 async def root():
-    """Root endpoint with API information"""
-    return {
-        "message": "SkillNavigator API",
-        "version": "1.0.0",
-        "description": "AI-Powered Multi-Agent Job Application Platform",
-        "docs": "/docs",
-        "status": "running"
-    }
+    """Root endpoint with SkillNavigator login page"""
+    from fastapi.responses import HTMLResponse
+    
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SkillNavigator - AI-Powered Job Application Platform</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+        <div class="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+            <div class="max-w-md w-full space-y-8">
+                <div class="text-center">
+                    <h1 class="text-4xl font-bold text-gray-900 mb-2">SkillNavigator</h1>
+                    <p class="text-gray-600 mb-8">AI-Powered Job Application Platform</p>
+                </div>
+                
+                <div class="bg-white rounded-xl shadow-lg p-8">
+                    <h2 class="text-2xl font-semibold text-center mb-6 text-gray-800">Welcome Back</h2>
+                    
+                    <form class="space-y-4" action="/api/user/login" method="post">
+                        <div>
+                            <input type="email" name="email" placeholder="Email Address" 
+                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <input type="password" name="password" placeholder="Password" 
+                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <button type="submit" 
+                                class="w-full bg-blue-600 text-white p-4 rounded-lg hover:bg-blue-700 transition duration-200 font-medium">
+                            Sign In
+                        </button>
+                    </form>
+                    
+                    <div class="mt-6 text-center">
+                        <p class="text-sm text-gray-600">
+                            Don't have an account? 
+                            <a href="/register" class="text-blue-600 hover:text-blue-800 font-medium">Create Account</a>
+                        </p>
+                    </div>
+                </div>
+                
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">
+                        API Documentation: <a href="/api/docs" class="text-blue-600 hover:text-blue-800">View API Docs</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)
 
 @app.head("/")
 async def root_head():
