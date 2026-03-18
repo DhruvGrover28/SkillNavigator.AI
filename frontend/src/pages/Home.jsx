@@ -24,8 +24,13 @@ const Home = () => {
   const fetchJobs = async () => {
     try {
       setLoading(true);
-      
-      // Mock job data for immediate display
+
+      const response = await axios.get('/api/jobs/', { timeout: 5000 });
+      if (response.data && response.data.length > 0) {
+        setJobs(response.data);
+        return;
+      }
+
       const mockJobs = [
         {
           id: 1,
@@ -108,22 +113,28 @@ const Home = () => {
           relevance_score: 0.91
         }
       ];
-      
       setJobs(mockJobs);
-      
-      // Still try to call real API for potential future debugging, but use fallback
-      try {
-        const response = await axios.get('/api/jobs/', { timeout: 3000 });
-        if (response.data && response.data.length > 0) {
-          setJobs(response.data); // Use real data if available
-        }
-      } catch (apiError) {
-        console.log('Using mock jobs data - API call failed:', apiError.message);
-        // Keep mock data
-      }
-      
     } catch (error) {
       console.error('Error fetching jobs:', error);
+      const fallbackJobs = [
+        {
+          id: 1,
+          title: "Senior Software Engineer",
+          company: "Google",
+          location: "Mountain View, CA",
+          description: "Join our innovative team to build scalable systems",
+          salary_min: 120000,
+          salary_max: 180000,
+          job_type: "full-time",
+          experience_level: "senior",
+          remote_allowed: true,
+          apply_url: "https://careers.google.com/jobs/123",
+          posted_date: "2025-07-28T00:00:00Z",
+          source: "linkedin",
+          relevance_score: 0.95
+        }
+      ];
+      setJobs(fallbackJobs);
     } finally {
       setLoading(false);
     }

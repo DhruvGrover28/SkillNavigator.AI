@@ -178,14 +178,32 @@ async def search_jobs(
 async def get_job(job_id: int, db = Depends(get_db)):
     """Get specific job by ID"""
     try:
-        # This would query the database for the specific job
-        # For now, return sample job
-        job = None
-        
+        job = db.query(Job).filter(Job.id == job_id).first()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
-        return job
+
+        return {
+            "id": job.id,
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "description": job.description,
+            "requirements": job.requirements,
+            "salary_min": job.salary_min,
+            "salary_max": job.salary_max,
+            "job_type": job.job_type,
+            "experience_level": job.experience_level,
+            "remote_allowed": job.remote_allowed if job.remote_allowed is not None else False,
+            "apply_url": job.apply_url,
+            "posted_date": job.posted_date,
+            "scraped_at": job.scraped_at,
+            "source": job.source,
+            "relevance_score": job.relevance_score,
+            "match_score": job.match_score,
+            "classification": job.classification,
+            "score_breakdown": json.loads(job.score_breakdown) if job.score_breakdown else None,
+            "score_explanation": job.score_explanation
+        }
         
     except HTTPException:
         raise
@@ -202,10 +220,37 @@ async def get_scored_jobs(
 ):
     """Get scored jobs for a specific user"""
     try:
-        # This would query scored jobs for the user
-        # For now, return empty list
+        threshold = min_score * 100 if min_score <= 1 else min_score
+        jobs = db.query(Job).filter(Job.match_score.isnot(None), Job.match_score >= threshold)
+        jobs = jobs.order_by(Job.match_score.desc()).limit(limit).all()
+
         scored_jobs = []
-        
+        for job in jobs:
+            scored_jobs.append({
+                "id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "description": job.description,
+                "requirements": job.requirements,
+                "salary_min": job.salary_min,
+                "salary_max": job.salary_max,
+                "job_type": job.job_type,
+                "experience_level": job.experience_level,
+                "remote_allowed": job.remote_allowed if job.remote_allowed is not None else False,
+                "apply_url": job.apply_url,
+                "posted_date": job.posted_date,
+                "scraped_at": job.scraped_at,
+                "source": job.source,
+                "relevance_score": job.relevance_score,
+                "match_score": job.match_score,
+                "classification": job.classification,
+                "score_breakdown": json.loads(job.score_breakdown) if job.score_breakdown else None,
+                "score_explanation": job.score_explanation,
+                "skills_match": job.get_skills_match(),
+                "component_scores": None
+            })
+
         return scored_jobs
         
     except Exception as e:
@@ -279,14 +324,25 @@ async def get_job_recommendations(
 ):
     """Get personalized job recommendations for a user"""
     try:
-        # This would get top scored jobs for the user
-        # For now, return empty list
-        recommendations = []
+        recommendations = db.query(Job).filter(Job.match_score.isnot(None))
+        recommendations = recommendations.order_by(Job.match_score.desc()).limit(limit).all()
+        recommendation_data = []
+        for job in recommendations:
+            recommendation_data.append({
+                "id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "description": job.description,
+                "apply_url": job.apply_url,
+                "match_score": job.match_score,
+                "source": job.source
+            })
         
         return {
             "user_id": user_id,
-            "recommendations": recommendations,
-            "total_count": len(recommendations),
+            "recommendations": recommendation_data,
+            "total_count": len(recommendation_data),
             "timestamp": datetime.utcnow().isoformat()
         }
         

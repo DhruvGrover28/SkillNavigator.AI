@@ -4,7 +4,7 @@ Endpoints for user profile management and preferences
 """
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from typing import List, Dict, Optional
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
@@ -13,7 +13,7 @@ import tempfile
 import os
 import sqlite3
 
-from database.db_connection import get_db, database, User
+from database.db_connection import get_db, database, User, Job, JobApplication
 from agents.resume_parser_agent import ResumeParserAgent
 from utils.auth_utils import hash_password, verify_password, create_user_token, is_valid_email, is_strong_password
 
@@ -174,9 +174,22 @@ class AuthResponse(BaseModel):
 async def get_user_profile(user_id: int, db = Depends(get_db)):
     """Get user profile by ID"""
     try:
-        # This would query the database for user profile
-        # For now, return sample profile
-        user_profile = {
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            return UserProfileResponse(
+                id=user.id,
+                email=user.email,
+                name=user.name,
+                created_at=user.created_at,
+                updated_at=user.updated_at,
+                resume_path=user.resume_path,
+                skills=user.get_skills(),
+                preferences=user.get_preferences(),
+                location=user.location,
+                experience_years=user.experience_years or 0
+            )
+
+        fallback_profile = {
             "id": user_id,
             "email": "demo@skillnavigator.com",
             "name": "Demo User",
@@ -194,8 +207,7 @@ async def get_user_profile(user_id: int, db = Depends(get_db)):
             "location": "San Francisco, CA",
             "experience_years": 2
         }
-        
-        return UserProfileResponse(**user_profile)
+        return UserProfileResponse(**fallback_profile)
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching user profile: {str(e)}")
@@ -209,15 +221,29 @@ async def update_user_profile(
 ):
     """Update user profile"""
     try:
-        # This would update user profile in database
-        # For now, just return success
-        
         update_data = profile_update.dict(exclude_none=True)
-        
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if not user:
+            return {
+                "message": "User not found. Profile update stored as sample response.",
+                "user_id": user_id,
+                "updated_fields": list(update_data.keys()),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        if "skills" in update_data:
+            user.set_skills(update_data.pop("skills"))
+
+        for field, value in update_data.items():
+            setattr(user, field, value)
+
+        db.commit()
+
         return {
             "message": "Profile updated successfully",
             "user_id": user_id,
-            "updated_fields": list(update_data.keys()),
+            "updated_fields": list(profile_update.dict(exclude_none=True).keys()),
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -229,9 +255,15 @@ async def update_user_profile(
 async def get_user_preferences(user_id: int, db = Depends(get_db)):
     """Get user preferences"""
     try:
-        # This would query user preferences from database
-        # For now, return sample preferences
-        preferences = {
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            return {
+                "user_id": user_id,
+                "preferences": user.get_preferences(),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        fallback_preferences = {
             "preferred_locations": ["Remote", "San Francisco", "New York"],
             "job_types": ["full-time", "contract"],
             "experience_levels": ["entry", "mid"],
@@ -248,10 +280,10 @@ async def get_user_preferences(user_id: int, db = Depends(get_db)):
                 "weekly_summary": True
             }
         }
-        
+
         return {
             "user_id": user_id,
-            "preferences": preferences,
+            "preferences": fallback_preferences,
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -267,11 +299,22 @@ async def update_user_preferences(
 ):
     """Update user preferences"""
     try:
-        # This would update user preferences in database
-        # For now, just return success
-        
         update_data = preferences_update.dict(exclude_none=True)
-        
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if not user:
+            return {
+                "message": "User not found. Preferences update stored as sample response.",
+                "user_id": user_id,
+                "updated_preferences": list(update_data.keys()),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        current_prefs = user.get_preferences()
+        current_prefs.update(update_data)
+        user.set_preferences(current_prefs)
+        db.commit()
+
         return {
             "message": "Preferences updated successfully",
             "user_id": user_id,
@@ -405,17 +448,24 @@ async def upload_resume(
 async def get_resume_info(user_id: int, db = Depends(get_db)):
     """Get user resume information"""
     try:
-        # This would query database for resume info
-        # For now, return sample info
-        resume_info = {
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and user.resume_path:
+            return {
+                "user_id": user_id,
+                "resume_path": user.resume_path,
+                "uploaded_at": user.updated_at.isoformat() if user.updated_at else datetime.utcnow().isoformat(),
+                "file_size": None,
+                "content_type": None
+            }
+
+        fallback_info = {
             "user_id": user_id,
             "resume_path": f"uploads/resumes/resume_{user_id}_20250101_120000.pdf",
             "uploaded_at": datetime.utcnow().isoformat(),
             "file_size": 1024000,
             "content_type": "application/pdf"
         }
-        
-        return resume_info
+        return fallback_info
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching resume info: {str(e)}")
@@ -425,9 +475,24 @@ async def get_resume_info(user_id: int, db = Depends(get_db)):
 async def delete_resume(user_id: int, db = Depends(get_db)):
     """Delete user resume"""
     try:
-        # This would delete resume file and update database
-        # For now, just return success
-        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.resume_path:
+            return {
+                "message": "No resume found for this user",
+                "user_id": user_id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        resume_path = user.resume_path
+        if resume_path and os.path.exists(resume_path):
+            try:
+                os.remove(resume_path)
+            except Exception:
+                pass
+
+        user.resume_path = None
+        db.commit()
+
         return {
             "message": "Resume deleted successfully",
             "user_id": user_id,
@@ -653,12 +718,9 @@ async def login_user(request: Request):
             }
             
             if is_form:
-                return _render_auth_page(
-                    "Sign In",
-                    "Login successful. You can now return to the app.",
-                    {"email": email},
-                    "/api/user/login"
-                )
+                response = RedirectResponse(url="/home", status_code=303)
+                response.set_cookie("auth_token", token, httponly=False, samesite="lax")
+                return response
 
             return AuthResponse(success=True, message="Login successful", token=token, user=user_data)
             
@@ -673,10 +735,34 @@ async def login_user(request: Request):
 async def create_user(user_data: CreateUserRequest, db = Depends(get_db)):
     """Create new user (legacy endpoint)"""
     try:
-        # Legacy endpoint - redirect to register
+        existing_user = db.query(User).filter(User.email == user_data.email).first()
+        if existing_user:
+            return {
+                "message": "User with this email already exists",
+                "user_id": existing_user.id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        new_user = User(
+            email=user_data.email,
+            name=user_data.name,
+            location=user_data.location,
+            experience_years=user_data.experience_years
+        )
+        new_user.set_skills(user_data.skills)
+        new_user.set_preferences(user_data.preferences)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
         return {
-            "message": "Please use /register endpoint for new user creation",
-            "redirect": "/api/user/register"
+            "message": "User created successfully",
+            "user": {
+                "id": new_user.id,
+                "email": new_user.email,
+                "name": new_user.name
+            },
+            "timestamp": datetime.utcnow().isoformat()
         }
         
     except Exception as e:
@@ -720,31 +806,39 @@ async def get_skill_suggestions(query: str = "", limit: int = 10):
 async def get_user_stats(user_id: int, db = Depends(get_db)):
     """Get user statistics and insights"""
     try:
-        # This would calculate user statistics from database
-        # For now, return sample stats
+        total_applications = db.query(JobApplication).filter(JobApplication.user_id == user_id).count()
+        responded = db.query(JobApplication).filter(
+            JobApplication.user_id == user_id,
+            JobApplication.status != "applied"
+        ).count()
+        interviews = db.query(JobApplication).filter(
+            JobApplication.user_id == user_id,
+            JobApplication.status.like("%interview%")
+        ).count()
+        successes = db.query(JobApplication).filter(
+            JobApplication.user_id == user_id,
+            JobApplication.status.like("%accepted%")
+        ).count()
+
+        avg_score = round((responded / total_applications) * 100, 1) if total_applications else 0.0
+
+        recommended_jobs = db.query(Job).filter(Job.match_score.isnot(None), Job.match_score >= 70).count()
+
         stats = {
-            "profile_completeness": 85,
-            "total_applications": 15,
-            "response_rate": 33.3,
-            "interview_rate": 20.0,
-            "success_rate": 6.7,
-            "avg_application_score": 0.72,
-            "skill_match_rate": 78.5,
-            "profile_views": 42,
-            "recommended_jobs": 8,
-            "profile_strength": "Strong",
-            "areas_for_improvement": [
-                "Add more recent projects to portfolio",
-                "Expand skill set in cloud technologies",
-                "Increase application frequency"
-            ],
-            "achievements": [
-                "High skill match rate",
-                "Strong profile completeness",
-                "Active job seeker"
-            ]
+            "profile_completeness": 0,
+            "total_applications": total_applications,
+            "response_rate": round((responded / total_applications) * 100, 1) if total_applications else 0,
+            "interview_rate": round((interviews / total_applications) * 100, 1) if total_applications else 0,
+            "success_rate": round((successes / total_applications) * 100, 1) if total_applications else 0,
+            "avg_application_score": avg_score,
+            "skill_match_rate": 0,
+            "profile_views": 0,
+            "recommended_jobs": recommended_jobs,
+            "profile_strength": "",
+            "areas_for_improvement": [],
+            "achievements": []
         }
-        
+
         return {
             "user_id": user_id,
             "stats": stats,
@@ -759,14 +853,22 @@ async def get_user_stats(user_id: int, db = Depends(get_db)):
 async def delete_user(user_id: int, db = Depends(get_db)):
     """Delete user and all associated data"""
     try:
-        # This would delete user and all related data from database
-        # For now, just return success
-        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {
+                "message": "User not found",
+                "user_id": user_id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        db.delete(user)
+        db.commit()
+
         return {
             "message": "User deleted successfully",
             "user_id": user_id,
             "deleted_data": [
-                "profile", "applications", "preferences", "resume", "activity_logs"
+                "profile", "applications", "preferences", "resume"
             ],
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -784,22 +886,56 @@ async def export_user_data(
 ):
     """Export all user data"""
     try:
-        # This would export all user data
-        # For now, return download info
-        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {
+                "message": "User not found",
+                "user_id": user_id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        applications = []
+        if include_applications:
+            applications = db.query(JobApplication).filter(JobApplication.user_id == user_id).all()
+
+        export_payload = {
+            "profile": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "location": user.location,
+                "experience_years": user.experience_years,
+                "skills": user.get_skills(),
+                "preferences": user.get_preferences(),
+                "resume_path": user.resume_path
+            },
+            "applications": [
+                {
+                    "id": app.id,
+                    "job_id": app.job_id,
+                    "status": app.status,
+                    "applied_at": app.applied_at.isoformat() if app.applied_at else None,
+                    "auto_applied": app.auto_applied,
+                    "notes": app.notes
+                }
+                for app in applications
+            ]
+        }
+
+        if format.lower() != "json":
+            return {
+                "message": "Only JSON export is supported right now",
+                "user_id": user_id,
+                "format": format,
+                "data": export_payload,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
         return {
             "message": "User data export generated",
             "user_id": user_id,
-            "format": format,
-            "includes": {
-                "profile": True,
-                "preferences": True,
-                "applications": include_applications,
-                "resume_info": True,
-                "activity_logs": True
-            },
-            "download_url": f"/downloads/user_data_{user_id}_{datetime.utcnow().strftime('%Y%m%d')}.{format}",
-            "expires_at": (datetime.utcnow().replace(hour=23, minute=59, second=59)).isoformat(),
+            "format": "json",
+            "data": export_payload,
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -811,12 +947,21 @@ async def export_user_data(
 async def analyze_resume(user_id: int, db = Depends(get_db)):
     """Analyze uploaded resume and extract insights"""
     try:
-        # This would use AI to analyze the resume
-        # For now, return sample analysis
-        
-        analysis = {
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and user.resume_path and os.path.exists(user.resume_path):
+            parser = ResumeParserAgent()
+            parsed_data = parser.parse_resume(user.resume_path, os.path.basename(user.resume_path))
+            if parsed_data.get("success"):
+                return {
+                    "user_id": user_id,
+                    "analysis": parsed_data,
+                    "confidence_score": 0.85,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+        fallback_analysis = {
             "extracted_skills": [
-                "Python", "JavaScript", "React", "Django", "PostgreSQL", 
+                "Python", "JavaScript", "React", "Django", "PostgreSQL",
                 "Git", "AWS", "Machine Learning"
             ],
             "experience_level": "Mid-level (2-3 years)",
@@ -838,11 +983,11 @@ async def analyze_resume(user_id: int, db = Depends(get_db)):
             "readability_score": 85,
             "format_score": 90
         }
-        
+
         return {
             "user_id": user_id,
-            "analysis": analysis,
-            "confidence_score": 0.89,
+            "analysis": fallback_analysis,
+            "confidence_score": 0.5,
             "timestamp": datetime.utcnow().isoformat()
         }
         

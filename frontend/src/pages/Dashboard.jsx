@@ -34,7 +34,7 @@ const Dashboard = () => {
       'Content-Type': 'application/json'
     };
     
-    return fetch(`http://localhost:8000${url}`, {
+    return fetch(`${url}`, {
       ...options,
       headers
     });
@@ -76,10 +76,10 @@ const Dashboard = () => {
       // Fetch job count
       let totalJobs = 0;
       try {
-        const jobsResponse = await fetch('http://localhost:8000/api/jobs/count');
+        const jobsResponse = await fetch('/api/jobs/stats/summary');
         if (jobsResponse.ok) {
           const jobsData = await jobsResponse.json();
-          totalJobs = jobsData.count || 0;
+          totalJobs = jobsData.total_jobs || 0;
         }
       } catch (error) {
         console.log('Could not fetch job count:', error);

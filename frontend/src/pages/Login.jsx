@@ -146,8 +146,9 @@ const Login = ({ setIsAuthenticated }) => {
                     type="button"
                     className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    {showPassword ? 'Hide' : 'Show'}
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>
               </div>
