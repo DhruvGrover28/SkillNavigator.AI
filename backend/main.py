@@ -122,17 +122,20 @@ try:
 except ImportError as e:
     logger.warning(f"Auto-apply router not available: {e}")
 
-# Serve static files (React build and public assets)
+# Serve static files (React/Vite build and public assets)
 try:
-    # Serve React app build files
-    if os.path.exists("../frontend/dist"):
-        app.mount("/static", StaticFiles(directory="../frontend/dist/assets"), name="static")
-        logger.info("Frontend static assets mounted successfully")
-    elif os.path.exists("../public"):
-        app.mount("/static", StaticFiles(directory="../public"), name="static")
-        logger.info("Public static files mounted successfully")
+    dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+    assets_dir = os.path.join(dist_dir, "assets")
+    public_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "public"))
+
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        logger.info("Frontend assets mounted at /assets")
+    elif os.path.exists(public_dir):
+        app.mount("/assets", StaticFiles(directory=public_dir), name="assets")
+        logger.info("Public assets mounted at /assets")
     else:
-        logger.info("No static directory found - skipping static file serving")
+        logger.info("No static assets directory found - skipping static file serving")
 except Exception as e:
     logger.warning(f"Could not mount static files: {e}")
 
