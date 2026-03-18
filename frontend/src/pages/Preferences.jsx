@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiBase } from '../utils/api'
 import { 
   Upload, 
   User, 
@@ -172,7 +173,7 @@ const Preferences = () => {
       }
       
       const token = localStorage.getItem('authToken')
-      const response = await fetch(`http://localhost:8000/api/user/resume/${userId}`, {
+  const response = await fetch(`${apiBase}/api/user/resume/${userId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -290,7 +291,7 @@ const Preferences = () => {
       
       // Save skills to backend using our API
       const token = localStorage.getItem('authToken')
-      const response = await fetch(`http://localhost:8000/api/user/skills/${userId}`, {
+  const response = await fetch(`${apiBase}/api/user/skills/${userId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -4,6 +4,7 @@ import { Eye, EyeOff, Mail, Lock, User, Briefcase } from 'lucide-react'
 
 const Register = ({ setIsAuthenticated }) => {
   const navigate = useNavigate()
+  const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -67,7 +68,7 @@ const Register = ({ setIsAuthenticated }) => {
     try {
       console.log('Calling registration API...')
       
-  const response = await fetch('/api/user/register', {
+  const response = await fetch(`${apiBase}/api/user/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

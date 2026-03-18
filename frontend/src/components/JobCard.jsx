@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MapPin, Building, Calendar, ExternalLink } from 'lucide-react';
 import ScoreTag from './ScoreTag';
+import { apiBase } from '../utils/api';
 
 const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
   const [isApplying, setIsApplying] = useState(false);
@@ -164,7 +165,7 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
                 try {
                   setIsApplying(true);
                   
-                  const response = await fetch(`http://localhost:8000/api/jobs/auto-apply/${id}`, {
+                  const response = await fetch(`${apiBase}/api/jobs/auto-apply/${id}`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',

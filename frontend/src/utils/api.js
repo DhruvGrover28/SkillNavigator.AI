@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+
 const api = axios.create({
-  baseURL: '',
+  baseURL: apiBase,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -100,5 +102,7 @@ export const agentsAPI = {
     coordinate: (task) => api.post('/api/agents/supervisor/coordinate', task),
   },
 };
+
+export { apiBase };
 
 export default api;

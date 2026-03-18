@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiBase } from '../utils/api';
 import './AutoApplyDashboard.css';
 
 const AutoApplyDashboard = () => {
@@ -11,7 +12,7 @@ const AutoApplyDashboard = () => {
       'Authorization': `Bearer ${token}`
     };
     
-    return fetch(`http://localhost:8000${url}`, {
+  return fetch(`${apiBase}${url}`, {
       ...options,
       headers
     });

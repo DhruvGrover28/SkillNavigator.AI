@@ -4,6 +4,7 @@ import { User, CheckCircle, Mail, Eye, EyeOff, Briefcase } from 'lucide-react'
 
 const Login = ({ setIsAuthenticated }) => {
   const navigate = useNavigate()
+  const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -34,7 +35,7 @@ const Login = ({ setIsAuthenticated }) => {
     try {
       console.log('Sending login request to backend...')
       
-  const response = await fetch('/api/user/login', {
+  const response = await fetch(`${apiBase}/api/user/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

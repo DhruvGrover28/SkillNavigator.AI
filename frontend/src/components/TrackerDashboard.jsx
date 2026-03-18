@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiBase } from '../utils/api';
 import { 
   Calendar, 
   Building, 
@@ -45,7 +46,7 @@ const TrackerDashboard = () => {
       'Content-Type': 'application/json'
     };
     
-    return fetch(`http://localhost:8000${url}`, {
+  return fetch(`${apiBase}${url}`, {
       ...options,
       headers
     });
