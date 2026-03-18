@@ -10,7 +10,12 @@ import json
 import asyncio
 
 import openai
-from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers import SentenceTransformer
+    HAS_SBERT = True
+except ImportError:
+    SentenceTransformer = None
+    HAS_SBERT = False
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -61,12 +66,15 @@ class ScoringAgent:
             else:
                 logger.warning("OpenAI API key not found, semantic scoring will be limited")
             
-            # Initialize sentence transformer model
-            try:
-                self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-                logger.info("Sentence transformer model loaded")
-            except Exception as e:
-                logger.warning(f"Failed to load sentence transformer: {e}")
+            # Initialize sentence transformer model (optional)
+            if HAS_SBERT:
+                try:
+                    self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+                    logger.info("Sentence transformer model loaded")
+                except Exception as e:
+                    logger.warning(f"Failed to load sentence transformer: {e}")
+            else:
+                logger.info("Sentence transformer not installed; using TF-IDF similarity")
             
             logger.info("Scoring agent initialized successfully")
             
@@ -217,9 +225,6 @@ class ScoringAgent:
     async def _calculate_semantic_similarity(self, profile_features: Dict, job_features: Dict) -> float:
         """Calculate semantic similarity using embeddings"""
         try:
-            if not self.sentence_model:
-                return 0.0
-            
             # Combine profile text
             profile_text = " ".join([
                 " ".join(profile_features.get('skills', [])),
@@ -238,13 +243,19 @@ class ScoringAgent:
             if not profile_text.strip() or not job_text.strip():
                 return 0.0
             
-            # Generate embeddings
-            profile_embedding = self.sentence_model.encode([profile_text])
-            job_embedding = self.sentence_model.encode([job_text])
+            if self.sentence_model:
+                # Generate embeddings
+                profile_embedding = self.sentence_model.encode([profile_text])
+                job_embedding = self.sentence_model.encode([job_text])
+                
+                # Calculate cosine similarity
+                similarity = cosine_similarity(profile_embedding, job_embedding)[0][0]
+                
+                return max(0.0, similarity)
             
-            # Calculate cosine similarity
-            similarity = cosine_similarity(profile_embedding, job_embedding)[0][0]
-            
+            # TF-IDF fallback when SBERT isn't available
+            tfidf_matrix = self.tfidf_vectorizer.fit_transform([profile_text, job_text])
+            similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
             return max(0.0, similarity)
             
         except Exception as e:

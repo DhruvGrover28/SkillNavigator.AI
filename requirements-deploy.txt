@@ -21,7 +21,6 @@ python-dateutil>=2.8.2
 python-dotenv>=1.0.0
 numpy>=1.24.3
 scikit-learn>=1.3.2
-sentence-transformers>=2.2.2
 
 # Resume parsing
 PyPDF2>=3.0.1
