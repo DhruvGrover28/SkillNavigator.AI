@@ -29,6 +29,7 @@ const Preferences = () => {
   const [parseStatus, setParseStatus] = useState('') // '', 'parsing', 'success', 'error'
   const [isSaving, setIsSaving] = useState(false)
   const [showWelcome, setShowWelcome] = useState(true) // Show welcome message for new users
+  const [infoNotice, setInfoNotice] = useState('')
   const fileInputRef = useRef(null)
 
   const [formData, setFormData] = useState({
@@ -207,6 +208,7 @@ const Preferences = () => {
           
           setResumeUploaded(true)
           setParseStatus('success')
+          setInfoNotice('')
           
           // Show success message with extracted skills
           alert(`✅ Resume processed successfully! ${result.skills_count} skills extracted and saved: ${result.extracted_skills.slice(0, 5).join(', ')}${result.skills_count > 5 ? '...' : ''}`)
@@ -218,51 +220,18 @@ const Preferences = () => {
         } else {
           setParseStatus('error')
           console.error('Resume parsing failed:', result)
-          alert(`Resume parsing failed: ${result.message || 'Unknown error'}. You can still fill in your information manually.`)
+          setInfoNotice('We could not parse your resume. Please add your resume, skills, and profile data so all agents can work properly.')
         }
       } else {
         const errorText = await response.text()
         setParseStatus('error')
         console.error('API error:', errorText)
-        alert(`Resume parsing failed: ${errorText}. You can still upload it and fill in your information manually.`)
+        setInfoNotice('We could not parse your resume. Please add your resume, skills, and profile data so all agents can work properly.')
       }
     } catch (error) {
-      // For demo purposes, simulate successful parsing
-      setTimeout(() => {
-        const demoData = {
-          firstName: 'John',
-          lastName: 'Doe',
-          email: 'john.doe@email.com',
-          phone: '+1 (555) 123-4567',
-          location: 'San Francisco, CA',
-          skills: ['JavaScript', 'React', 'Node.js', 'Python', 'SQL'],
-          summary: 'Experienced software engineer with 5+ years in full-stack development...',
-          experience: [
-            {
-              title: 'Senior Software Engineer',
-              company: 'Tech Corp',
-              duration: '2021 - Present',
-              description: 'Led development of web applications using React and Node.js'
-            }
-          ],
-          education: [
-            {
-              degree: 'Bachelor of Science in Computer Science',
-              school: 'University of California',
-              year: '2019'
-            }
-          ]
-        }
-        
-        setFormData(prev => ({
-          ...prev,
-          ...demoData,
-          parsedData: demoData
-        }))
-        
-        setResumeUploaded(true)
-        setParseStatus('success')
-      }, 2000)
+      setParseStatus('error')
+      console.error('Resume upload error:', error)
+      setInfoNotice('We could not parse your resume. Please add your resume, skills, and profile data so all agents can work properly.')
     } finally {
       setIsUploading(false)
     }
@@ -366,6 +335,12 @@ const Preferences = () => {
                   <X className="h-4 w-4" />
                 </button>
               </div>
+            </div>
+          )}
+
+          {infoNotice && (
+            <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+              {infoNotice}
             </div>
           )}
         </div>

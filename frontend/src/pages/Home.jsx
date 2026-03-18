@@ -9,12 +9,16 @@ const Home = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedJob, setSelectedJob] = useState(null);
+  const [fallbackNotice, setFallbackNotice] = useState('');
   const [stats, setStats] = useState({
     totalJobs: 0,
     appliedJobs: 0,
     avgMatchScore: 0,
     pendingApplications: 0
   });
+
+  const getJobUrl = (job) => job?.application_url || job?.apply_url || '';
+  const getEmailAddress = (url) => url.replace(/^mailto:/i, '').split('?')[0];
 
   useEffect(() => {
     fetchJobs();
@@ -24,96 +28,14 @@ const Home = () => {
   const fetchJobs = async () => {
     try {
       setLoading(true);
+      setFallbackNotice('');
 
       const response = await axios.get('/api/jobs/', { timeout: 5000 });
       if (response.data && response.data.length > 0) {
         setJobs(response.data);
-        return;
+      } else {
+        setJobs([]);
       }
-
-      const mockJobs = [
-        {
-          id: 1,
-          title: "Senior Software Engineer",
-          company: "Google",
-          location: "Mountain View, CA",
-          description: "Join our innovative team to build scalable systems",
-          salary_min: 120000,
-          salary_max: 180000,
-          job_type: "full-time",
-          experience_level: "senior",
-          remote_allowed: true,
-          apply_url: "https://careers.google.com/jobs/123",
-          posted_date: "2025-07-28T00:00:00Z",
-          source: "linkedin",
-          relevance_score: 0.95
-        },
-        {
-          id: 2,
-          title: "Frontend Developer",
-          company: "Meta",
-          location: "Menlo Park, CA",
-          description: "Create amazing user experiences with React",
-          salary_min: 100000,
-          salary_max: 150000,
-          job_type: "full-time",
-          experience_level: "mid",
-          remote_allowed: true,
-          apply_url: "https://careers.meta.com/jobs/456",
-          posted_date: "2025-07-29T00:00:00Z",
-          source: "indeed",
-          relevance_score: 0.88
-        },
-        {
-          id: 3,
-          title: "DevOps Engineer",
-          company: "Amazon",
-          location: "Seattle, WA",
-          description: "Build and maintain cloud infrastructure",
-          salary_min: 110000,
-          salary_max: 160000,
-          job_type: "full-time",
-          experience_level: "mid",
-          remote_allowed: false,
-          apply_url: "https://amazon.jobs/en/jobs/789",
-          posted_date: "2025-07-30T00:00:00Z",
-          source: "glassdoor",
-          relevance_score: 0.82
-        },
-        {
-          id: 4,
-          title: "Full Stack Developer",
-          company: "Microsoft",
-          location: "Redmond, WA",
-          description: "Work on cutting-edge web applications",
-          salary_min: 95000,
-          salary_max: 145000,
-          job_type: "full-time",
-          experience_level: "entry",
-          remote_allowed: true,
-          apply_url: "https://careers.microsoft.com/jobs/101112",
-          posted_date: "2025-07-31T00:00:00Z",
-          source: "linkedin",
-          relevance_score: 0.79
-        },
-        {
-          id: 5,
-          title: "Data Scientist",
-          company: "Netflix",
-          location: "Los Gatos, CA",
-          description: "Analyze data to drive business decisions",
-          salary_min: 125000,
-          salary_max: 175000,
-          job_type: "full-time",
-          experience_level: "senior",
-          remote_allowed: true,
-          apply_url: "https://jobs.netflix.com/jobs/131415",
-          posted_date: "2025-08-01T00:00:00Z",
-          source: "indeed",
-          relevance_score: 0.91
-        }
-      ];
-      setJobs(mockJobs);
     } catch (error) {
       console.error('Error fetching jobs:', error);
       const fallbackJobs = [
@@ -135,6 +57,7 @@ const Home = () => {
         }
       ];
       setJobs(fallbackJobs);
+      setFallbackNotice('We could not load live job data. Please add your resume, skills, and profile data so all agents can work properly.');
     } finally {
       setLoading(false);
     }
@@ -247,6 +170,16 @@ const Home = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {fallbackNotice && (
+          <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            {fallbackNotice}
+          </div>
+        )}
+        {fallbackNotice && (
+          <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            {fallbackNotice}
+          </div>
+        )}
         {/* Stats Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard
@@ -367,16 +300,44 @@ const Home = () => {
                   >
                     Close
                   </button>
-                  {selectedJob.application_url && (
-                    <a
-                      href={selectedJob.application_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-primary px-4 py-2"
-                    >
-                      Apply Now
-                    </a>
-                  )}
+                  {(() => {
+                    const jobUrl = getJobUrl(selectedJob);
+                    const isMailto = jobUrl?.toLowerCase().startsWith('mailto:');
+
+                    if (!jobUrl) return null;
+
+                    if (!isMailto) {
+                      return (
+                        <a
+                          href={jobUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-primary px-4 py-2"
+                        >
+                          Apply Now
+                        </a>
+                      );
+                    }
+
+                    const emailAddress = getEmailAddress(jobUrl);
+
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(emailAddress);
+                            alert('Email address copied to clipboard.');
+                          } catch (error) {
+                            window.prompt('Copy email address:', emailAddress);
+                          }
+                        }}
+                        className="btn-primary px-4 py-2"
+                      >
+                        Copy Email
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

@@ -24,6 +24,19 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
 
   // Use apply_url if application_url is not available
   const jobUrl = application_url || apply_url;
+  const isMailto = jobUrl?.toLowerCase().startsWith('mailto:');
+  const emailAddress = isMailto ? jobUrl.replace(/^mailto:/i, '').split('?')[0] : '';
+
+  const handleCopyEmail = async () => {
+    if (!emailAddress) return;
+
+    try {
+      await navigator.clipboard.writeText(emailAddress);
+      alert('Email address copied to clipboard.');
+    } catch (error) {
+      window.prompt('Copy email address:', emailAddress);
+    }
+  };
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -146,7 +159,7 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
         </button>
         
         <div className="flex gap-2">
-          {jobUrl && (
+          {jobUrl && !isMailto && (
             <a
               href={jobUrl}
               target="_blank"
@@ -157,6 +170,19 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
               <ExternalLink className="w-4 h-4 mr-1" />
               Visit Job
             </a>
+          )}
+
+          {isMailto && emailAddress && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyEmail}
+                className="btn-primary px-4 py-2 text-sm inline-flex items-center hover:bg-blue-700 transition-colors"
+                title="Copy application email"
+              >
+                Copy Email
+              </button>
+              <span className="text-xs text-gray-500">{emailAddress}</span>
+            </div>
           )}
           
           {jobUrl && (

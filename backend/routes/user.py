@@ -189,25 +189,7 @@ async def get_user_profile(user_id: int, db = Depends(get_db)):
                 experience_years=user.experience_years or 0
             )
 
-        fallback_profile = {
-            "id": user_id,
-            "email": "demo@skillnavigator.com",
-            "name": "Demo User",
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "resume_path": None,
-            "skills": ["Python", "JavaScript", "React", "Machine Learning"],
-            "preferences": {
-                "preferred_locations": ["Remote", "San Francisco", "New York"],
-                "job_types": ["full-time", "contract"],
-                "experience_levels": ["entry", "mid"],
-                "salary_min": 60000,
-                "auto_apply": False
-            },
-            "location": "San Francisco, CA",
-            "experience_years": 2
-        }
-        return UserProfileResponse(**fallback_profile)
+        raise HTTPException(status_code=404, detail="User profile not found. Please complete registration and upload your resume and skills.")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching user profile: {str(e)}")
@@ -225,12 +207,7 @@ async def update_user_profile(
         user = db.query(User).filter(User.id == user_id).first()
 
         if not user:
-            return {
-                "message": "User not found. Profile update stored as sample response.",
-                "user_id": user_id,
-                "updated_fields": list(update_data.keys()),
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            raise HTTPException(status_code=404, detail="User not found. Please complete registration before updating your profile.")
 
         if "skills" in update_data:
             user.set_skills(update_data.pop("skills"))
@@ -263,29 +240,7 @@ async def get_user_preferences(user_id: int, db = Depends(get_db)):
                 "timestamp": datetime.utcnow().isoformat()
             }
 
-        fallback_preferences = {
-            "preferred_locations": ["Remote", "San Francisco", "New York"],
-            "job_types": ["full-time", "contract"],
-            "experience_levels": ["entry", "mid"],
-            "salary_min": 60000,
-            "salary_max": 120000,
-            "preferred_companies": ["Google", "Microsoft", "Apple"],
-            "avoided_companies": [],
-            "remote_preference": True,
-            "auto_apply": False,
-            "max_applications_per_day": 5,
-            "notification_preferences": {
-                "email_notifications": True,
-                "push_notifications": True,
-                "weekly_summary": True
-            }
-        }
-
-        return {
-            "user_id": user_id,
-            "preferences": fallback_preferences,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        raise HTTPException(status_code=404, detail="User preferences not found. Please complete your profile and preferences.")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching preferences: {str(e)}")
@@ -303,12 +258,7 @@ async def update_user_preferences(
         user = db.query(User).filter(User.id == user_id).first()
 
         if not user:
-            return {
-                "message": "User not found. Preferences update stored as sample response.",
-                "user_id": user_id,
-                "updated_preferences": list(update_data.keys()),
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            raise HTTPException(status_code=404, detail="User not found. Please complete registration before updating preferences.")
 
         current_prefs = user.get_preferences()
         current_prefs.update(update_data)
@@ -381,13 +331,7 @@ async def upload_resume(
             # Get or create user
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
-                # Create new user if doesn't exist
-                user = User(
-                    id=user_id,
-                    email=f"user_{user_id}@skillnavigator.com",  # Temporary email
-                    name=f"User {user_id}"  # Use name field instead of first_name/last_name
-                )
-                db.add(user)
+                raise HTTPException(status_code=404, detail="User not found. Please sign in before uploading a resume.")
             
             # Save extracted skills to user preferences
             if extracted_skills:
@@ -458,14 +402,7 @@ async def get_resume_info(user_id: int, db = Depends(get_db)):
                 "content_type": None
             }
 
-        fallback_info = {
-            "user_id": user_id,
-            "resume_path": f"uploads/resumes/resume_{user_id}_20250101_120000.pdf",
-            "uploaded_at": datetime.utcnow().isoformat(),
-            "file_size": 1024000,
-            "content_type": "application/pdf"
-        }
-        return fallback_info
+        raise HTTPException(status_code=404, detail="Resume not found. Please upload your resume to enable full agent functionality.")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching resume info: {str(e)}")
@@ -958,38 +895,7 @@ async def analyze_resume(user_id: int, db = Depends(get_db)):
                     "confidence_score": 0.85,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-
-        fallback_analysis = {
-            "extracted_skills": [
-                "Python", "JavaScript", "React", "Django", "PostgreSQL",
-                "Git", "AWS", "Machine Learning"
-            ],
-            "experience_level": "Mid-level (2-3 years)",
-            "key_achievements": [
-                "Led development of 3 web applications",
-                "Improved system performance by 40%",
-                "Managed team of 2 junior developers"
-            ],
-            "missing_skills": [
-                "Docker", "Kubernetes", "TypeScript", "GraphQL"
-            ],
-            "suggestions": [
-                "Add more quantifiable achievements",
-                "Include relevant certifications",
-                "Highlight leadership experience",
-                "Add technical project details"
-            ],
-            "ats_score": 78,
-            "readability_score": 85,
-            "format_score": 90
-        }
-
-        return {
-            "user_id": user_id,
-            "analysis": fallback_analysis,
-            "confidence_score": 0.5,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        raise HTTPException(status_code=400, detail="Resume analysis requires an uploaded resume. Please upload your resume and skills.")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error exporting user data: {str(e)}")
@@ -1006,13 +912,7 @@ async def update_user_skills(
         # Get or create user
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            # Create new user if doesn't exist
-            user = User(
-                id=user_id,
-                email=f"user_{user_id}@skillnavigator.com",
-                name=f"User {user_id}"  # Use name field instead of first_name/last_name
-            )
-            db.add(user)
+            raise HTTPException(status_code=404, detail="User not found. Please sign in before updating skills.")
         
         # Update skills
         user.set_skills(skills)

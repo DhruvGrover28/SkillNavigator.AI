@@ -275,7 +275,7 @@ class Database:
             # Ensure auth-related columns exist in sqlite databases
             self._ensure_user_auth_columns()
             
-            # Create default user if not exists
+            # No default demo data in production mode
             await self._create_default_data()
             
         except Exception as e:
@@ -303,35 +303,8 @@ class Database:
             conn.close()
     
     async def _create_default_data(self):
-        """Create default data for testing"""
-        db = self.get_session()
-        try:
-            # Check if any users exist
-            user_count = db.query(User).count()
-            if user_count == 0:
-                # Create default user
-                default_user = User(
-                    email="demo@skillnavigator.com",
-                    name="Demo User",
-                    skills=json.dumps(["Python", "JavaScript", "React", "Machine Learning"]),
-                    preferences=json.dumps({
-                        "preferred_locations": ["Remote", "San Francisco", "New York"],
-                        "job_types": ["full-time", "contract"],
-                        "experience_levels": ["entry", "mid"],
-                        "salary_min": 60000,
-                        "auto_apply": False
-                    }),
-                    location="San Francisco, CA",
-                    experience_years=2
-                )
-                db.add(default_user)
-                db.commit()
-                logger.info("Default user created")
-        except Exception as e:
-            logger.error(f"Failed to create default data: {e}")
-            db.rollback()
-        finally:
-            db.close()
+        """Create default data for testing (disabled in production)."""
+        logger.info("Skipping default demo data creation")
     
     def get_session(self) -> Session:
         """Get database session"""

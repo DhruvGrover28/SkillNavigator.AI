@@ -12,7 +12,7 @@ import json
 from .enhanced_scraper_agent import EnhancedScraperAgent, JobListing
 from database.db_connection import Database
 from .autoapply_agent import AutoApplyAgent
-# from .scoring_agent import ScoringAgent  # Temporarily disabled due to PyTorch memory issues
+from .scoring_agent import ScoringAgent
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,7 @@ class SimpleSupervisorAgent:
         self.scraper_agent = EnhancedScraperAgent()
         self.database = Database()
         self.autoapply_agent = AutoApplyAgent()
-        # self.scoring_agent = ScoringAgent()  # Temporarily disabled due to PyTorch memory issues
-        self.scoring_agent = None  # Disabled - using built-in simple scoring instead
+        self.scoring_agent = ScoringAgent()
         self.is_auto_mode = False
         self.auto_task = None
         self.last_search_time = None
@@ -68,16 +67,12 @@ class SimpleSupervisorAgent:
                 logger.warning(f"Auto-apply agent initialization failed: {e}")
                 logger.info("Continuing without auto-apply functionality")
             
-            # Temporarily disable scoring agent due to PyTorch memory issues
             try:
-                if self.scoring_agent:
-                    await self.scoring_agent.initialize()
-                    logger.info("Scoring agent initialized successfully")
-                else:
-                    logger.info("Scoring agent disabled - using simplified scoring")
+                await self.scoring_agent.initialize()
+                logger.info("Scoring agent initialized successfully")
             except Exception as e:
-                logger.warning(f"Scoring agent initialization failed: {e}")
-                logger.info("Continuing without ML scoring functionality")
+                logger.error(f"Scoring agent initialization failed: {e}")
+                raise
             
             logger.info("Simple supervisor agent initialized successfully")
         except Exception as e:

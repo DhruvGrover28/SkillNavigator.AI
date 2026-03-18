@@ -518,10 +518,34 @@ async def get_application_timeline(
 ):
     """Get application timeline for a user"""
     try:
-        # This would get timeline data from database
-        # For now, return sample timeline
+        import sqlite3
+        from datetime import datetime, timedelta
+
+        conn = sqlite3.connect('skillnavigator.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cursor.execute('''
+            SELECT ja.id, ja.status, ja.applied_at, j.title AS job_title, j.company
+            FROM job_applications ja
+            LEFT JOIN jobs j ON ja.job_id = j.id
+            WHERE ja.user_id = ? AND ja.applied_at >= ?
+            ORDER BY ja.applied_at DESC
+        ''', (user_id, cutoff_date.isoformat()))
+
         timeline = []
-        
+        for row in cursor.fetchall():
+            timeline.append({
+                "application_id": row["id"],
+                "status": row["status"],
+                "applied_at": row["applied_at"],
+                "job_title": row["job_title"] or "Unknown",
+                "company": row["company"] or "Unknown"
+            })
+
+        conn.close()
+
         return {
             "user_id": user_id,
             "timeline": timeline,
@@ -584,29 +608,64 @@ async def get_application_insights(
 ):
     """Get application insights and recommendations"""
     try:
-        # This would analyze application data and provide insights
-        # For now, return sample insights
+        import sqlite3
+        from datetime import datetime, timedelta
+
+        conn = sqlite3.connect('skillnavigator.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cursor.execute('''
+            SELECT ja.status, ja.applied_at, j.company
+            FROM job_applications ja
+            LEFT JOIN jobs j ON ja.job_id = j.id
+            WHERE ja.user_id = ? AND ja.applied_at >= ?
+        ''', (user_id, cutoff_date.isoformat()))
+
+        rows = cursor.fetchall()
+        total_applications = len(rows)
+
+        # Derive simple insights from real data
+        status_counts = {}
+        company_counts = {}
+        weekday_counts = {}
+
+        for row in rows:
+            status = row["status"] or "applied"
+            status_counts[status] = status_counts.get(status, 0) + 1
+            company = row["company"] or "Unknown"
+            company_counts[company] = company_counts.get(company, 0) + 1
+            applied_at = datetime.fromisoformat(row["applied_at"])
+            weekday = applied_at.strftime("%A")
+            weekday_counts[weekday] = weekday_counts.get(weekday, 0) + 1
+
+        top_companies = sorted(company_counts.items(), key=lambda item: item[1], reverse=True)[:5]
+        best_days = [day for day, _ in sorted(weekday_counts.items(), key=lambda item: item[1], reverse=True)[:2]]
+
         insights = {
             "success_patterns": {
-                "best_application_days": ["Tuesday", "Wednesday"],
-                "best_application_times": ["9:00 AM", "2:00 PM"],
-                "most_successful_companies": [],
+                "best_application_days": best_days,
+                "best_application_times": [],
+                "most_successful_companies": [company for company, _ in top_companies],
                 "most_successful_job_types": []
             },
-            "improvement_suggestions": [
-                "Follow up on applications after 1 week",
-                "Customize cover letters for each company",
-                "Apply to more entry-level positions"
-            ],
+            "improvement_suggestions": [],
             "response_rate_trend": [],
             "interview_conversion_trend": [],
             "recommendations": {
-                "target_companies": [],
+                "target_companies": [company for company, _ in top_companies],
                 "skill_gaps": [],
-                "application_frequency": "3-5 applications per week"
+                "application_frequency": None
+            },
+            "summary": {
+                "total_applications": total_applications,
+                "status_breakdown": status_counts
             }
         }
-        
+
+        conn.close()
+
         return {
             "user_id": user_id,
             "period_days": days,

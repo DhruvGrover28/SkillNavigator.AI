@@ -41,3 +41,6 @@ node_modules/
 # Temporary files
 temp/
 tmp/
+
+# Local tool versions
+.python-version
