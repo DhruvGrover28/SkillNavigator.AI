@@ -137,6 +137,16 @@ class SimpleSupervisorAgent:
         # Ensure score is within bounds
         return min(100.0, max(0.0, score))
 
+    def _classify_score(self, score: float) -> str:
+        """Classify a match score into a label"""
+        if score >= 85:
+            return "Excellent"
+        if score >= 70:
+            return "Good"
+        if score >= 50:
+            return "Fair"
+        return "Low"
+
     async def trigger_job_search(self, search_params: Dict) -> Dict:
         """
         Trigger a manual job search
@@ -217,10 +227,21 @@ class SimpleSupervisorAgent:
                     logger.info(f"Saved {len(saved_jobs)} jobs to database")
                     
                     # Score the jobs using simple scoring
+                    score_updates = []
                     for job_dict in job_dicts:
                         score = self.simple_score_job(job_dict)
+                        classification = self._classify_score(score)
                         job_dict['match_score'] = score
+                        job_dict['classification'] = classification
                         scored_jobs.append(job_dict)
+                        score_updates.append({
+                            "external_id": job_dict.get("external_id"),
+                            "match_score": score,
+                            "classification": classification
+                        })
+
+                    if score_updates:
+                        await self.database.update_job_match_scores(score_updates)
                         
                         # Auto-apply if score meets threshold and auto-apply is enabled
                         if (self.auto_apply_enabled and 

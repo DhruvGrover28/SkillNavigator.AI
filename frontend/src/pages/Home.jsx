@@ -10,6 +10,8 @@ const Home = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedJob, setSelectedJob] = useState(null);
   const [fallbackNotice, setFallbackNotice] = useState('');
+  const [scrapeInProgress, setScrapeInProgress] = useState(false);
+  const [scrapeStatusMessage, setScrapeStatusMessage] = useState('');
   const [stats, setStats] = useState({
     totalJobs: 0,
     appliedJobs: 0,
@@ -21,9 +23,35 @@ const Home = () => {
   const getEmailAddress = (url) => url.replace(/^mailto:/i, '').split('?')[0];
 
   useEffect(() => {
+    const scrapeStartedAt = localStorage.getItem('scrapeStartedAt');
+    if (scrapeStartedAt) {
+      setScrapeInProgress(true);
+      setScrapeStatusMessage('Fetching fresh job opportunities based on your preferences...');
+    }
     fetchJobs();
     fetchStats();
+    checkScrapeStatus();
   }, []);
+
+  const checkScrapeStatus = async () => {
+    const scrapeStartedAt = localStorage.getItem('scrapeStartedAt');
+    if (!scrapeStartedAt) {
+      setScrapeInProgress(false);
+      return;
+    }
+
+    try {
+      const response = await axios.get('/api/supervisor/status');
+      const lastSearchTime = response.data?.last_search_time;
+      if (lastSearchTime && new Date(lastSearchTime) >= new Date(scrapeStartedAt)) {
+        localStorage.removeItem('scrapeStartedAt');
+        setScrapeInProgress(false);
+        setScrapeStatusMessage('');
+      }
+    } catch (error) {
+      console.warn('Unable to check supervisor status:', error);
+    }
+  };
 
   const fetchJobs = async () => {
     try {
@@ -33,6 +61,11 @@ const Home = () => {
       const response = await axios.get('/api/jobs/', { timeout: 5000 });
       if (response.data && response.data.length > 0) {
         setJobs(response.data);
+        if (scrapeInProgress) {
+          localStorage.removeItem('scrapeStartedAt');
+          setScrapeInProgress(false);
+          setScrapeStatusMessage('');
+        }
       } else {
         setJobs([]);
       }
@@ -58,6 +91,8 @@ const Home = () => {
       ];
       setJobs(fallbackJobs);
       setFallbackNotice('We could not load live job data. Please add your resume, skills, and profile data so all agents can work properly.');
+      setScrapeInProgress(false);
+      setScrapeStatusMessage('');
     } finally {
       setLoading(false);
     }
@@ -170,6 +205,11 @@ const Home = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {scrapeInProgress && scrapeStatusMessage && (
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {scrapeStatusMessage}
+          </div>
+        )}
         {fallbackNotice && (
           <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
             {fallbackNotice}

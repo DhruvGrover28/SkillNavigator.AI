@@ -420,6 +420,26 @@ class Database:
             raise e
         finally:
             db.close()
+
+    async def update_job_match_scores(self, job_scores: List[dict]):
+        """Update job match scores and classifications by external_id"""
+        db = self.get_session()
+        try:
+            for score_data in job_scores:
+                external_id = score_data.get("external_id")
+                if not external_id:
+                    continue
+                job = db.query(Job).filter(Job.external_id == external_id).first()
+                if job:
+                    job.match_score = score_data.get("match_score")
+                    job.classification = score_data.get("classification")
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to update job match scores: {e}")
+            raise e
+        finally:
+            db.close()
     
     async def log_system_activity(self, agent_name: str, action: str, message: str, 
                                  level: str = "info", metadata: dict = None):

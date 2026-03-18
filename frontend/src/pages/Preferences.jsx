@@ -279,9 +279,40 @@ const Preferences = () => {
         // Store user preferences in localStorage for frontend use
         localStorage.setItem('userSkills', JSON.stringify(cleanSkills))
         localStorage.setItem('userPreferences', JSON.stringify(formData))
+
+        // Trigger supervisor workflow to scrape jobs after preferences are saved
+        try {
+          const searchQuery = formData.desiredRoles.find(role => role && role.trim())
+            || formData.currentRole
+            || cleanSkills.slice(0, 3).join(' ')
+            || 'software engineer'
+
+          const workflowResponse = await fetch(`${apiBase}/api/supervisor/workflow/trigger`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              search_query: searchQuery,
+              location: formData.preferredLocations?.find(loc => loc && loc.trim()) || 'Remote',
+              job_type: formData.jobTypes?.[0] || 'full-time',
+              max_jobs: 50
+            })
+          })
+
+          if (workflowResponse.ok) {
+            localStorage.setItem('scrapeStartedAt', new Date().toISOString())
+          } else {
+            const errorText = await workflowResponse.text()
+            console.warn('Failed to trigger job search workflow:', errorText)
+          }
+        } catch (error) {
+          console.warn('Error triggering job search workflow:', error)
+        }
         
         // Navigate to dashboard after successful save
-        navigate('/dashboard')
+        navigate('/home')
       } else {
         const errorData = await response.json()
         throw new Error(errorData.detail || 'Failed to save preferences')
