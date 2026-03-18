@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+const backendFallback = 'https://skill-navigator-ai.onrender.com';
+const inferredOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+const isLocal = inferredOrigin.includes('localhost') || inferredOrigin.includes('127.0.0.1');
+const apiBase = import.meta.env.VITE_API_BASE_URL || (isLocal ? inferredOrigin : backendFallback);
 
 const api = axios.create({
   baseURL: apiBase,

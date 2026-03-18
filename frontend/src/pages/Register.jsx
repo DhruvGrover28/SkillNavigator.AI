@@ -1,10 +1,10 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { apiBase } from '../utils/api'
 import { Eye, EyeOff, Mail, Lock, User, Briefcase } from 'lucide-react'
 
 const Register = ({ setIsAuthenticated }) => {
   const navigate = useNavigate()
-  const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin
   const [formData, setFormData] = useState({
     name: '',
     email: '',
