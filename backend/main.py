@@ -151,11 +151,19 @@ except Exception as e:
     logger.warning(f"Could not check for React build: {e}")
 
 
+def _spa_index_path() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "index.html"))
+
+
 @app.get("/")
 async def root():
-    """Root endpoint with SkillNavigator login page"""
+    """Root endpoint redirects to SPA login when available"""
     from fastapi.responses import HTMLResponse
-    
+
+    spa_index = _spa_index_path()
+    if os.path.exists(spa_index):
+        return RedirectResponse(url="/login", status_code=303)
+
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
@@ -236,19 +244,32 @@ async def root():
     return HTMLResponse(content=html_content)
 
 
+def _serve_spa_or_redirect(fallback_redirect: str):
+    spa_index = _spa_index_path()
+    if os.path.exists(spa_index):
+        return FileResponse(spa_index)
+    return RedirectResponse(url=fallback_redirect, status_code=303)
+
+
 @app.get("/home")
 async def home_page():
     """Serve SPA home if available, otherwise redirect to login"""
-    spa_index = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "index.html"))
-    if os.path.exists(spa_index):
-        return FileResponse(spa_index)
+    return _serve_spa_or_redirect("/")
 
-    return RedirectResponse(url="/", status_code=303)
+
+@app.get("/login")
+async def login_page():
+    """Serve SPA login if available, otherwise redirect to root login page"""
+    return _serve_spa_or_redirect("/")
 
 
 @app.get("/register")
 async def register_page():
     """Registration page for simple browser form usage"""
+    spa_index = _spa_index_path()
+    if os.path.exists(spa_index):
+        return FileResponse(spa_index)
+
     from fastapi.responses import HTMLResponse
 
     html_content = """
