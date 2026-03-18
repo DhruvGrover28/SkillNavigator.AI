@@ -10,6 +10,7 @@ from typing import List
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -178,8 +179,16 @@ async def root():
                                    class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                         </div>
                         <div>
-                            <input type="password" name="password" placeholder="Password" 
-                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <div class="relative">
+                                <input id="login-password" type="password" name="password" placeholder="Password" 
+                                       class="w-full p-4 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                <button type="button" id="toggle-password" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700" aria-label="Toggle password visibility">
+                                    <svg id="eye-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <button type="submit" 
                                 class="w-full bg-blue-600 text-white p-4 rounded-lg hover:bg-blue-700 transition duration-200 font-medium">
@@ -202,11 +211,36 @@ async def root():
                 </div>
             </div>
         </div>
+        <script>
+            const toggleButton = document.getElementById('toggle-password');
+            const passwordInput = document.getElementById('login-password');
+            const eyeIcon = document.getElementById('eye-icon');
+
+            if (toggleButton && passwordInput && eyeIcon) {
+                toggleButton.addEventListener('click', () => {
+                    const isPassword = passwordInput.getAttribute('type') === 'password';
+                    passwordInput.setAttribute('type', isPassword ? 'text' : 'password');
+                    eyeIcon.innerHTML = isPassword
+                        ? '<path d="M17.94 17.94A10.8 10.8 0 0 1 12 20c-7 0-11-8-11-8a21.5 21.5 0 0 1 5.06-6.94"></path><path d="M1 1l22 22"></path><path d="M9.9 4.24A10.8 10.8 0 0 1 12 4c7 0 11 8 11 8a21.5 21.5 0 0 1-3.17 4.36"></path><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"></path>'
+                        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+                });
+            }
+        </script>
     </body>
     </html>
     """
     
     return HTMLResponse(content=html_content)
+
+
+@app.get("/home")
+async def home_page():
+    """Serve SPA home if available, otherwise redirect to login"""
+    spa_index = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "index.html"))
+    if os.path.exists(spa_index):
+        return FileResponse(spa_index)
+
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/register")
