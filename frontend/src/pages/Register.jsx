@@ -67,7 +67,7 @@ const Register = ({ setIsAuthenticated }) => {
     try {
       console.log('Calling registration API...')
       
-      const response = await fetch('http://localhost:8000/api/user/register', {
+  const response = await fetch('/api/user/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -93,8 +93,8 @@ const Register = ({ setIsAuthenticated }) => {
         setIsAuthenticated(true)
         console.log('Authentication state set to true, navigating...')
         
-        // Navigate to preferences first after registration
-        navigate('/preferences')
+  // Navigate to home after registration
+  navigate('/home')
       } else {
         setError(data.message || 'Registration failed')
       }

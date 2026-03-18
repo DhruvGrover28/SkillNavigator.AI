@@ -3,7 +3,8 @@ User API Routes
 Endpoints for user profile management and preferences
 """
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request
+from fastapi.responses import HTMLResponse
 from typing import List, Dict, Optional
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
@@ -15,6 +16,95 @@ import sqlite3
 from database.db_connection import get_db, database, User
 from agents.resume_parser_agent import ResumeParserAgent
 from utils.auth_utils import hash_password, verify_password, create_user_token, is_valid_email, is_strong_password
+
+
+def _render_auth_page(title: str, message: str = "", fields: Dict[str, str] = None, action: str = "") -> HTMLResponse:
+    """Render a simple HTML auth page for form submissions."""
+    fields = fields or {}
+    email_value = fields.get("email", "")
+    name_value = fields.get("name", "")
+    message_block = f"<div class=\"mb-4 text-sm text-red-600\">{message}</div>" if message else ""
+
+    name_field = ""
+    confirm_password_field = ""
+    terms_field = ""
+    if "register" in action:
+        name_field = f"""
+            <div>
+                <input type=\"text\" name=\"name\" placeholder=\"Full Name\" value=\"{name_value}\"
+                       class=\"w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent\">
+            </div>
+        """
+        confirm_password_field = """
+            <div>
+                <input type=\"password\" name=\"confirm_password\" placeholder=\"Confirm Password\"
+                       class=\"w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent\">
+            </div>
+        """
+        terms_field = """
+            <div class=\"flex items-center gap-2 text-sm text-gray-600\">
+                <input type=\"checkbox\" name=\"terms\" checked>
+                <span>I accept the Terms of Service</span>
+            </div>
+        """
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang=\"en\">
+    <head>
+        <meta charset=\"UTF-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <title>{title} - SkillNavigator</title>
+        <script src=\"https://cdn.tailwindcss.com\"></script>
+    </head>
+    <body class=\"bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen\">
+        <div class=\"min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8\">
+            <div class=\"max-w-md w-full space-y-6\">
+                <div class=\"text-center\">
+                    <h1 class=\"text-3xl font-bold text-gray-900\">SkillNavigator</h1>
+                    <p class=\"text-gray-600\">AI-Powered Job Application Platform</p>
+                </div>
+                <div class=\"bg-white rounded-xl shadow-lg p-8\">
+                    <h2 class=\"text-2xl font-semibold text-center mb-6 text-gray-800\">{title}</h2>
+                    {message_block}
+                    <form class=\"space-y-4\" action=\"{action}\" method=\"post\">
+                        {name_field}
+                        <div>
+                            <input type=\"email\" name=\"email\" placeholder=\"Email Address\" value=\"{email_value}\"
+                                   class=\"w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent\">
+                        </div>
+                        <div>
+                            <input type=\"password\" name=\"password\" placeholder=\"Password\"
+                                   class=\"w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent\">
+                        </div>
+                        {confirm_password_field}
+                        {terms_field}
+                        <button type=\"submit\" class=\"w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition duration-200 font-medium\">
+                            {title}
+                        </button>
+                    </form>
+                    <div class=\"mt-6 text-center text-sm text-gray-600\">
+                        {"Already have an account? <a class=\"text-blue-600\" href=\"/\">Sign in</a>" if "register" in action else "Don't have an account? <a class=\"text-blue-600\" href=\"/register\">Create account</a>"}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
+async def _extract_request_data(request: Request) -> Dict:
+    """Extract JSON or form data from a request."""
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        return dict(form), True
+    try:
+        return await request.json(), False
+    except Exception:
+        return {}, False
 
 router = APIRouter()
 
@@ -349,34 +439,59 @@ async def delete_resume(user_id: int, db = Depends(get_db)):
 
 
 @router.post("/register", response_model=AuthResponse)
-async def register_user(register_data: RegisterRequest):
+async def register_user(request: Request):
     """Register a new user with real database storage"""
     try:
+        payload, is_form = await _extract_request_data(request)
+        register_data = RegisterRequest(
+            name=str(payload.get("name", "")).strip(),
+            email=str(payload.get("email", "")).strip(),
+            password=str(payload.get("password", "")),
+            confirm_password=str(payload.get("confirm_password", "")),
+            terms=str(payload.get("terms", "true")).lower() in {"true", "1", "on", "yes"}
+        )
+
         # Validation
         if not is_valid_email(register_data.email):
-            return AuthResponse(
-                success=False,
-                message="Invalid email address"
-            )
+            if is_form:
+                return _render_auth_page(
+                    "Create Account",
+                    "Invalid email address",
+                    {"email": register_data.email, "name": register_data.name},
+                    "/api/user/register"
+                )
+            return AuthResponse(success=False, message="Invalid email address")
         
         if register_data.password != register_data.confirm_password:
-            return AuthResponse(
-                success=False,
-                message="Passwords do not match"
-            )
+            if is_form:
+                return _render_auth_page(
+                    "Create Account",
+                    "Passwords do not match",
+                    {"email": register_data.email, "name": register_data.name},
+                    "/api/user/register"
+                )
+            return AuthResponse(success=False, message="Passwords do not match")
         
         is_strong, password_msg = is_strong_password(register_data.password)
         if not is_strong:
-            return AuthResponse(
-                success=False,
-                message=password_msg
-            )
+            if is_form:
+                return _render_auth_page(
+                    "Create Account",
+                    password_msg,
+                    {"email": register_data.email, "name": register_data.name},
+                    "/api/user/register"
+                )
+            return AuthResponse(success=False, message=password_msg)
         
         if not register_data.terms:
-            return AuthResponse(
-                success=False,
-                message="Please accept the Terms of Service"
-            )
+            if is_form:
+                return _render_auth_page(
+                    "Create Account",
+                    "Please accept the Terms of Service",
+                    {"email": register_data.email, "name": register_data.name},
+                    "/api/user/register"
+                )
+            return AuthResponse(success=False, message="Please accept the Terms of Service")
         
         # Connect to database
         conn = sqlite3.connect('skillnavigator.db')
@@ -388,10 +503,14 @@ async def register_user(register_data: RegisterRequest):
             existing_user = cursor.fetchone()
             
             if existing_user:
-                return AuthResponse(
-                    success=False,
-                    message="User with this email already exists"
-                )
+                if is_form:
+                    return _render_auth_page(
+                        "Create Account",
+                        "User with this email already exists",
+                        {"email": register_data.email, "name": register_data.name},
+                        "/api/user/register"
+                    )
+                return AuthResponse(success=False, message="User with this email already exists")
             
             # Hash password
             password_hash = hash_password(register_data.password)
@@ -411,14 +530,15 @@ async def register_user(register_data: RegisterRequest):
             
             # Insert new user
             cursor.execute('''
-                INSERT INTO users (email, name, created_at, updated_at, preferences)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO users (email, name, created_at, updated_at, preferences, password_hash)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', (
                 register_data.email,
                 register_data.name,
                 datetime.now().isoformat(),
                 datetime.now().isoformat(),
-                json.dumps(preferences)
+                json.dumps(preferences),
+                password_hash
             ))
             
             user_id = cursor.lastrowid
@@ -435,12 +555,15 @@ async def register_user(register_data: RegisterRequest):
                 "created_at": datetime.now().isoformat()
             }
             
-            return AuthResponse(
-                success=True,
-                message="User registered successfully",
-                token=token,
-                user=user_data
-            )
+            if is_form:
+                return _render_auth_page(
+                    "Sign In",
+                    "Account created successfully. Please sign in.",
+                    {"email": register_data.email},
+                    "/api/user/login"
+                )
+
+            return AuthResponse(success=True, message="User registered successfully", token=token, user=user_data)
             
         finally:
             conn.close()
@@ -450,9 +573,33 @@ async def register_user(register_data: RegisterRequest):
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login_user(login_data: LoginRequest):
+async def login_user(request: Request):
     """Login user with email and password"""
     try:
+        payload, is_form = await _extract_request_data(request)
+        email = str(payload.get("email", "")).strip()
+        password = str(payload.get("password", ""))
+
+        if not email or not password:
+            if is_form:
+                return _render_auth_page(
+                    "Sign In",
+                    "Email and password are required",
+                    {"email": email},
+                    "/api/user/login"
+                )
+            return AuthResponse(success=False, message="Email and password are required")
+
+        if not is_valid_email(email):
+            if is_form:
+                return _render_auth_page(
+                    "Sign In",
+                    "Invalid email address",
+                    {"email": email},
+                    "/api/user/login"
+                )
+            return AuthResponse(success=False, message="Invalid email address")
+
         # Connect to database
         conn = sqlite3.connect('skillnavigator.db')
         cursor = conn.cursor()
@@ -462,26 +609,34 @@ async def login_user(login_data: LoginRequest):
             cursor.execute('''
                 SELECT id, email, name, preferences, password_hash
                 FROM users WHERE email = ?
-            ''', (login_data.email,))
+            ''', (email,))
             
             user_record = cursor.fetchone()
             
             if not user_record:
-                return AuthResponse(
-                    success=False,
-                    message="Invalid email or password"
-                )
+                if is_form:
+                    return _render_auth_page(
+                        "Sign In",
+                        "Login failed. Please check your email and password.",
+                        {"email": email},
+                        "/api/user/login"
+                    )
+                return AuthResponse(success=False, message="Invalid email or password")
             
             user_id, email, name, preferences_str, stored_password_hash = user_record
             
             # Check password - handle both new users with hashed passwords and existing users without
             if stored_password_hash:
                 # New user with proper password hash
-                if not verify_password(login_data.password, stored_password_hash):
-                    return AuthResponse(
-                        success=False,
-                        message="Invalid email or password"
-                    )
+                if not verify_password(password, stored_password_hash):
+                    if is_form:
+                        return _render_auth_page(
+                            "Sign In",
+                            "Login failed. Please check your email and password.",
+                            {"email": email},
+                            "/api/user/login"
+                        )
+                    return AuthResponse(success=False, message="Invalid email or password")
             else:
                 # Existing user without password hash - accept any password for now
                 # In production, you'd force password reset
@@ -497,12 +652,15 @@ async def login_user(login_data: LoginRequest):
                 "name": name
             }
             
-            return AuthResponse(
-                success=True,
-                message="Login successful",
-                token=token,
-                user=user_data
-            )
+            if is_form:
+                return _render_auth_page(
+                    "Sign In",
+                    "Login successful. You can now return to the app.",
+                    {"email": email},
+                    "/api/user/login"
+                )
+
+            return AuthResponse(success=True, message="Login successful", token=token, user=user_data)
             
         finally:
             conn.close()

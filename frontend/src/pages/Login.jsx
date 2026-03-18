@@ -34,7 +34,7 @@ const Login = ({ setIsAuthenticated }) => {
     try {
       console.log('Sending login request to backend...')
       
-      const response = await fetch('http://localhost:8000/api/user/login', {
+  const response = await fetch('/api/user/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -59,8 +59,8 @@ const Login = ({ setIsAuthenticated }) => {
         console.log('Login successful!')
         setIsAuthenticated(true)
         
-        // Navigate to preferences first after login
-        navigate('/preferences')
+  // Navigate to home after login
+  navigate('/home')
       } else {
         setError(result.message || result.detail || 'Invalid email or password')
       }

@@ -67,7 +67,7 @@ function App() {
             
             {/* Protected Routes */}
             <Route path="/" element={
-              isAuthenticated ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />
+              isAuthenticated ? <Navigate to="/home" replace /> : <Navigate to="/login" replace />
             } />
             <Route path="/home" element={
               <ProtectedRoute>
@@ -112,7 +112,7 @@ function App() {
             
             {/* Catch all - redirect to appropriate page */}
             <Route path="*" element={
-              isAuthenticated ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />
+              isAuthenticated ? <Navigate to="/home" replace /> : <Navigate to="/login" replace />
             } />
           </Routes>
         </main>

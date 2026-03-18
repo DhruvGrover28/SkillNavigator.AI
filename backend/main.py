@@ -208,6 +208,80 @@ async def root():
     
     return HTMLResponse(content=html_content)
 
+
+@app.get("/register")
+async def register_page():
+    """Registration page for simple browser form usage"""
+    from fastapi.responses import HTMLResponse
+
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SkillNavigator - Create Account</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+        <div class="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+            <div class="max-w-md w-full space-y-8">
+                <div class="text-center">
+                    <h1 class="text-4xl font-bold text-gray-900 mb-2">SkillNavigator</h1>
+                    <p class="text-gray-600 mb-8">AI-Powered Job Application Platform</p>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-lg p-8">
+                    <h2 class="text-2xl font-semibold text-center mb-6 text-gray-800">Create Account</h2>
+
+                    <form class="space-y-4" action="/api/user/register" method="post">
+                        <div>
+                            <input type="text" name="name" placeholder="Full Name"
+                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <input type="email" name="email" placeholder="Email Address"
+                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <input type="password" name="password" placeholder="Password"
+                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <input type="password" name="confirm_password" placeholder="Confirm Password"
+                                   class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <div class="flex items-center gap-2 text-sm text-gray-600">
+                            <input type="checkbox" name="terms" checked>
+                            <span>I accept the Terms of Service</span>
+                        </div>
+                        <button type="submit"
+                                class="w-full bg-blue-600 text-white p-4 rounded-lg hover:bg-blue-700 transition duration-200 font-medium">
+                            Create Account
+                        </button>
+                    </form>
+
+                    <div class="mt-6 text-center">
+                        <p class="text-sm text-gray-600">
+                            Already have an account?
+                            <a href="/" class="text-blue-600 hover:text-blue-800 font-medium">Sign In</a>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">
+                        API Documentation: <a href="/api/docs" class="text-blue-600 hover:text-blue-800">View API Docs</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
+
 @app.head("/")
 async def root_head():
     """HEAD request handler for deployment health checks"""

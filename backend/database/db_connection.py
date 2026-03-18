@@ -47,6 +47,7 @@ class User(Base):
     preferences = Column(Text, nullable=True)  # JSON string
     location = Column(String, nullable=True)
     experience_years = Column(Integer, default=0)
+    password_hash = Column(String, nullable=True)
     
     # Relationships
     job_applications = relationship("JobApplication", back_populates="user")
@@ -270,6 +271,9 @@ class Database:
             # Create all tables
             Base.metadata.create_all(bind=self.engine)
             logger.info("Database tables created successfully")
+
+            # Ensure auth-related columns exist in sqlite databases
+            self._ensure_user_auth_columns()
             
             # Create default user if not exists
             await self._create_default_data()
@@ -277,6 +281,26 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
             raise
+
+    def _ensure_user_auth_columns(self):
+        """Ensure required auth columns exist for SQLite databases."""
+        if "sqlite" not in DATABASE_URL:
+            return
+
+        import sqlite3
+
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(users)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "password_hash" not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+                conn.commit()
+                logger.info("Added password_hash column to users table")
+        finally:
+            conn.close()
     
     async def _create_default_data(self):
         """Create default data for testing"""
