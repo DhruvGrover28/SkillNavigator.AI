@@ -3,7 +3,7 @@ import { MapPin, Building, Calendar, ExternalLink } from 'lucide-react';
 import ScoreTag from './ScoreTag';
 import { apiBase } from '../utils/api';
 
-const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
+const JobCard = ({ job, onViewDetails, onStatusUpdate, showScore = true }) => {
   const [isApplying, setIsApplying] = useState(false);
   
   const {
@@ -82,12 +82,14 @@ const JobCard = ({ job, onViewDetails, onStatusUpdate }) => {
         </div>
         
         <div className="flex flex-col items-end space-y-2">
-          <ScoreTag 
-            score={match_score} 
-            classification={job.classification}
-            showLabel={true}
-            size="normal"
-          />
+          {showScore && (
+            <ScoreTag 
+              score={match_score} 
+              classification={job.classification}
+              showLabel={true}
+              size="normal"
+            />
+          )}
           {status && (
             <span className={`badge ${getStatusColor(status)}`}>
               {status}

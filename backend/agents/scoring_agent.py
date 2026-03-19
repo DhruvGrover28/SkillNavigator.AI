@@ -82,7 +82,7 @@ class ScoringAgent:
             logger.error(f"Failed to initialize scoring agent: {e}")
             raise
     
-    async def score_jobs(self, user_id: int, max_jobs: int = 100) -> List[Dict]:
+    async def score_jobs(self, user_id: int, max_jobs: int = 100, include_scored: bool = False) -> List[Dict]:
         """
         Score all unscored jobs for a user
         
@@ -96,7 +96,7 @@ class ScoringAgent:
                 raise ValueError(f"User profile not found for user_id: {user_id}")
             
             # Get jobs that need scoring
-            jobs = await database.get_jobs_for_scoring(limit=max_jobs)
+            jobs = await database.get_jobs_for_scoring(limit=max_jobs, include_scored=include_scored)
             if not jobs:
                 logger.info("No jobs found for scoring")
                 return []
@@ -463,14 +463,27 @@ class ScoringAgent:
         self.user_profile_cache[user_id] = profile
         return profile
     
+    def _classify_score(self, score_percent: float) -> str:
+        """Classify a percent score for UI labels"""
+        if score_percent >= 80:
+            return "Excellent Fit"
+        if score_percent >= 65:
+            return "Good Fit"
+        if score_percent >= 40:
+            return "Fair Fit"
+        return "Poor Fit"
+
     async def _update_job_scores(self, scored_jobs: List[Dict]):
         """Update job scores in database"""
         score_updates = []
         for job_data in scored_jobs:
+            score_percent = round(job_data["score"] * 100, 1)
             score_updates.append({
                 'job_id': job_data['job_id'],
                 'score': job_data['score'],
-                'skills_match': job_data['skills_match']
+                'skills_match': job_data['skills_match'],
+                'match_score': score_percent,
+                'classification': self._classify_score(score_percent)
             })
         
         await database.update_job_scores(score_updates)
@@ -488,7 +501,7 @@ class ScoringAgent:
             del self.user_profile_cache[user_id]
         
         # Rescore all jobs
-        return await self.score_jobs(user_id)
+        return await self.score_jobs(user_id, include_scored=True)
     
     def is_healthy(self) -> bool:
         """Check if the scoring agent is healthy"""

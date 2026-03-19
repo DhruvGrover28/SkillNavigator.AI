@@ -88,7 +88,13 @@ async def get_jobs(
         if experience_level:
             filters['experience_level'] = experience_level
         if min_score is not None:
-            filters['min_score'] = min_score
+            # Allow callers to pass a 0.0-1.0 value (fraction) or 0-100 absolute score.
+            # Normalize to 0-100 for comparison with stored `Job.match_score`.
+            if min_score <= 1.0:
+                scaled_min = float(min_score) * 100.0
+            else:
+                scaled_min = float(min_score)
+            filters['min_score'] = scaled_min
         
         # Query the database with filters
         query = db.query(Job)
@@ -101,11 +107,14 @@ async def get_jobs(
         if experience_level:
             query = query.filter(Job.experience_level == experience_level)
         if min_score is not None:
-            query = query.filter(Job.match_score >= min_score)
-        
+            query = query.filter(Job.match_score >= filters['min_score'])
+
         # Adaptive filtering based on user preferences
+        # Only apply adaptive threshold if there are already scored jobs in DB.
         threshold = _get_adaptive_threshold(db)
-        query = query.filter(Job.match_score >= threshold)
+        has_scored = db.query(Job).filter(Job.match_score.isnot(None)).count() > 0
+        if has_scored:
+            query = query.filter(Job.match_score >= threshold)
         
         # Sort by match score in descending order (highest scores first)
         query = query.order_by(Job.match_score.desc())

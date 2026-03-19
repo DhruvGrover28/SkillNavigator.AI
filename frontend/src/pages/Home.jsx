@@ -3,6 +3,7 @@ import { Search, Filter, Briefcase, TrendingUp, Users, Target } from 'lucide-rea
 import JobCard from '../components/JobCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import axios from 'axios';
+import { apiBase } from '../utils/api';
 
 const Home = () => {
   const [jobs, setJobs] = useState([]);
@@ -12,6 +13,7 @@ const Home = () => {
   const [fallbackNotice, setFallbackNotice] = useState('');
   const [scrapeInProgress, setScrapeInProgress] = useState(false);
   const [scrapeStatusMessage, setScrapeStatusMessage] = useState('');
+  const [hasPreferences, setHasPreferences] = useState(false);
   const [stats, setStats] = useState({
     totalJobs: 0,
     appliedJobs: 0,
@@ -30,8 +32,39 @@ const Home = () => {
     }
     fetchJobs();
     fetchStats();
+    fetchUserProfile();
     checkScrapeStatus();
   }, []);
+
+  const fetchUserProfile = async () => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      if (!user.id) {
+        setHasPreferences(false);
+        return;
+      }
+
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${apiBase}/api/user/profile/${user.id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : undefined
+      });
+
+      if (!response.ok) {
+        setHasPreferences(false);
+        return;
+      }
+
+      const profile = await response.json();
+      const skills = profile.skills || [];
+      const preferences = profile.preferences || {};
+      const hasSkills = Array.isArray(skills) && skills.length > 0;
+      const hasPrefs = preferences && Object.keys(preferences).length > 0;
+      setHasPreferences(hasSkills || hasPrefs);
+    } catch (error) {
+      console.warn('Unable to load user profile:', error);
+      setHasPreferences(false);
+    }
+  };
 
   const checkScrapeStatus = async () => {
     const scrapeStartedAt = localStorage.getItem('scrapeStartedAt');
@@ -71,26 +104,8 @@ const Home = () => {
       }
     } catch (error) {
       console.error('Error fetching jobs:', error);
-      const fallbackJobs = [
-        {
-          id: 1,
-          title: "Senior Software Engineer",
-          company: "Google",
-          location: "Mountain View, CA",
-          description: "Join our innovative team to build scalable systems",
-          salary_min: 120000,
-          salary_max: 180000,
-          job_type: "full-time",
-          experience_level: "senior",
-          remote_allowed: true,
-          apply_url: "https://careers.google.com/jobs/123",
-          posted_date: "2025-07-28T00:00:00Z",
-          source: "linkedin",
-          relevance_score: 0.95
-        }
-      ];
-      setJobs(fallbackJobs);
-      setFallbackNotice('We could not load live job data. Please add your resume, skills, and profile data so all agents can work properly.');
+      setJobs([]);
+      setFallbackNotice('We could not load live job data. Please try again shortly.');
       setScrapeInProgress(false);
       setScrapeStatusMessage('');
     } finally {
@@ -215,11 +230,6 @@ const Home = () => {
             {fallbackNotice}
           </div>
         )}
-        {fallbackNotice && (
-          <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            {fallbackNotice}
-          </div>
-        )}
         {/* Stats Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard
@@ -237,7 +247,7 @@ const Home = () => {
           <StatCard
             icon={Target}
             title="Avg Match Score"
-            value={`${stats.avgMatchScore || 0}%`}
+            value={hasPreferences ? `${stats.avgMatchScore || 0}%` : '—'}
             color="purple"
           />
           <StatCard
@@ -276,6 +286,7 @@ const Home = () => {
               <JobCard
                 key={job.id}
                 job={job}
+                showScore={hasPreferences}
                 onViewDetails={handleViewDetails}
               />
             ))}

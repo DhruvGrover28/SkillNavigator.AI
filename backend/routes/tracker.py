@@ -680,7 +680,7 @@ async def get_application_insights(
 @router.post("/export/{user_id}")
 async def export_applications(
     user_id: int,
-    format: str = Query("csv", regex="^(csv|json|excel)$"),
+    format: str = Query("csv", pattern="^(csv|json|excel)$"),
     days: Optional[int] = Query(None, ge=1, le=365),
     status: Optional[str] = None
 ):

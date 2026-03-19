@@ -384,13 +384,14 @@ class Database:
         finally:
             db.close()
     
-    async def get_jobs_for_scoring(self, limit: int = 100) -> List[Job]:
+    async def get_jobs_for_scoring(self, limit: int = 100, include_scored: bool = False) -> List[Job]:
         """Get jobs that need scoring"""
         db = self.get_session()
         try:
-            return db.query(Job).filter(
-                Job.relevance_score.is_(None)
-            ).limit(limit).all()
+            query = db.query(Job)
+            if not include_scored:
+                query = query.filter(Job.relevance_score.is_(None))
+            return query.limit(limit).all()
         finally:
             db.close()
 
@@ -412,6 +413,10 @@ class Database:
                     job.relevance_score = score_data["score"]
                     if "skills_match" in score_data:
                         job.set_skills_match(score_data["skills_match"])
+                    if "match_score" in score_data:
+                        job.match_score = score_data["match_score"]
+                    if "classification" in score_data:
+                        job.classification = score_data["classification"]
             
             db.commit()
         except Exception as e:

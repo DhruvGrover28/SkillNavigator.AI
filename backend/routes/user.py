@@ -15,6 +15,10 @@ import sqlite3
 
 from database.db_connection import get_db, database, User, Job, JobApplication
 from agents.resume_parser_agent import ResumeParserAgent
+from agents.scoring_agent import ScoringAgent
+import logging
+
+logger = logging.getLogger(__name__)
 from utils.auth_utils import hash_password, verify_password, create_user_token, is_valid_email, is_strong_password
 
 
@@ -360,6 +364,14 @@ async def upload_resume(
             
             db.commit()
             
+            # Trigger scoring after resume-derived skills are saved
+            try:
+                scoring_agent = ScoringAgent()
+                await scoring_agent.initialize()
+                await scoring_agent.rescore_jobs_for_user(user_id)
+            except Exception as scoring_error:
+                logger.warning(f"Failed to rescore jobs after resume upload: {scoring_error}")
+
             return {
                 "message": "Resume uploaded and processed successfully",
                 "user_id": user_id,
@@ -927,6 +939,14 @@ async def update_user_skills(
         
         db.commit()
         
+        # Trigger scoring after skills are saved
+        try:
+            scoring_agent = ScoringAgent()
+            await scoring_agent.initialize()
+            await scoring_agent.rescore_jobs_for_user(user_id)
+        except Exception as scoring_error:
+            logger.warning(f"Failed to rescore jobs after skills update: {scoring_error}")
+
         return {
             "message": "Skills updated successfully",
             "user_id": user_id,
