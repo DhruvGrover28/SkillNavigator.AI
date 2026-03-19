@@ -139,6 +139,45 @@ const Preferences = () => {
     }))
   }
 
+  const triggerWorkflow = async (skillFallback = []) => {
+    try {
+      const token = localStorage.getItem('authToken')
+      const searchQuery = formData.desiredRoles.find(role => role && role.trim())
+        || formData.currentRole
+        || skillFallback.slice(0, 3).join(' ')
+        || formData.skills.filter(skill => skill && skill.trim()).slice(0, 3).join(' ')
+        || 'software engineer'
+
+      const payload = {
+        search_query: searchQuery,
+        location: formData.preferredLocations?.find(loc => loc && loc.trim()) || 'Remote',
+        job_type: formData.jobTypes?.[0] || 'full-time',
+        max_jobs: 50
+      }
+
+      console.log('[preferences] triggering workflow', payload)
+
+      const workflowResponse = await fetch(`${apiBase}/api/supervisor/workflow/trigger`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (workflowResponse.ok) {
+        localStorage.setItem('scrapeStartedAt', new Date().toISOString())
+        console.log('[preferences] workflow started')
+      } else {
+        const errorText = await workflowResponse.text()
+        console.warn('[preferences] workflow trigger failed:', errorText)
+      }
+    } catch (error) {
+      console.warn('[preferences] workflow trigger error:', error)
+    }
+  }
+
   const handleFileUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -174,7 +213,7 @@ const Preferences = () => {
       }
       
       const token = localStorage.getItem('authToken')
-  const response = await fetch(`${apiBase}/api/user/resume/${userId}`, {
+      const response = await fetch(`${apiBase}/api/user/resume/${userId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -213,6 +252,9 @@ const Preferences = () => {
           // Show success message with extracted skills
           alert(`✅ Resume processed successfully! ${result.skills_count} skills extracted and saved: ${result.extracted_skills.slice(0, 5).join(', ')}${result.skills_count > 5 ? '...' : ''}`)
           
+          // Trigger workflow using extracted skills so Home has jobs soon
+          await triggerWorkflow(result.extracted_skills || [])
+
           // Auto-advance to personal info tab after successful parsing
           setTimeout(() => {
             setActiveTab('personal')
@@ -281,35 +323,7 @@ const Preferences = () => {
         localStorage.setItem('userPreferences', JSON.stringify(formData))
 
         // Trigger supervisor workflow to scrape jobs after preferences are saved
-        try {
-          const searchQuery = formData.desiredRoles.find(role => role && role.trim())
-            || formData.currentRole
-            || cleanSkills.slice(0, 3).join(' ')
-            || 'software engineer'
-
-          const workflowResponse = await fetch(`${apiBase}/api/supervisor/workflow/trigger`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              search_query: searchQuery,
-              location: formData.preferredLocations?.find(loc => loc && loc.trim()) || 'Remote',
-              job_type: formData.jobTypes?.[0] || 'full-time',
-              max_jobs: 50
-            })
-          })
-
-          if (workflowResponse.ok) {
-            localStorage.setItem('scrapeStartedAt', new Date().toISOString())
-          } else {
-            const errorText = await workflowResponse.text()
-            console.warn('Failed to trigger job search workflow:', errorText)
-          }
-        } catch (error) {
-          console.warn('Error triggering job search workflow:', error)
-        }
+        await triggerWorkflow(cleanSkills)
         
         // Navigate to dashboard after successful save
         navigate('/home')

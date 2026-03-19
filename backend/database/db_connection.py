@@ -274,6 +274,7 @@ class Database:
 
             # Ensure auth-related columns exist in sqlite databases
             self._ensure_user_auth_columns()
+            self._ensure_job_score_columns()
             
             # No default demo data in production mode
             await self._create_default_data()
@@ -299,6 +300,35 @@ class Database:
                 cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
                 conn.commit()
                 logger.info("Added password_hash column to users table")
+        finally:
+            conn.close()
+
+    def _ensure_job_score_columns(self):
+        """Ensure job scoring columns exist for SQLite databases."""
+        if "sqlite" not in DATABASE_URL:
+            return
+
+        import sqlite3
+
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(jobs)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "match_score" not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN match_score REAL")
+                logger.info("Added match_score column to jobs table")
+            if "classification" not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN classification TEXT")
+                logger.info("Added classification column to jobs table")
+            if "score_breakdown" not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN score_breakdown TEXT")
+                logger.info("Added score_breakdown column to jobs table")
+            if "score_explanation" not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN score_explanation TEXT")
+                logger.info("Added score_explanation column to jobs table")
+            conn.commit()
         finally:
             conn.close()
     

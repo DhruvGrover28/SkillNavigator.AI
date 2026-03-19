@@ -111,8 +111,8 @@ class SimpleSupervisorAgent:
         if job_dict.get('description'): score += 10
         
         # Title-based scoring (simple keyword matching)
-        title = job_dict.get('title', '').lower()
-        description = job_dict.get('description', '').lower()
+        title = (job_dict.get('title') or '').lower()
+        description = (job_dict.get('description') or '').lower()
         
         # Python/Software keywords
         python_keywords = ['python', 'django', 'flask', 'fastapi', 'pandas', 'numpy', 'ml', 'machine learning']
@@ -121,17 +121,17 @@ class SimpleSupervisorAgent:
             elif keyword in description: score += 3
             
         # Experience level matching
-        experience = job_dict.get('experience_level', '').lower()
+        experience = (job_dict.get('experience_level') or '').lower()
         if 'junior' in experience or 'entry' in experience: score += 5
         if 'mid' in experience or 'intermediate' in experience: score += 8
         if 'senior' in experience: score += 6
         
         # Remote work bonus
-        location = job_dict.get('location', '').lower()
+        location = (job_dict.get('location') or '').lower()
         if 'remote' in location: score += 10
         
         # Job type preference (full-time preferred)
-        job_type = job_dict.get('job_type', '').lower()
+        job_type = (job_dict.get('job_type') or '').lower()
         if 'full-time' in job_type or 'full time' in job_type: score += 5
         
         # Ensure score is within bounds
@@ -184,6 +184,8 @@ class SimpleSupervisorAgent:
                         posted_date = datetime.fromisoformat(posted_date.replace('Z', '+00:00'))
                     except:
                         posted_date = datetime.now()
+                if not isinstance(posted_date, datetime):
+                    posted_date = None
                 
                 # Detect source from URL
                 source = 'unknown'

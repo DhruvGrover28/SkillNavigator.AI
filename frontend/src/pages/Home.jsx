@@ -29,6 +29,7 @@ const Home = () => {
     if (scrapeStartedAt) {
       setScrapeInProgress(true);
       setScrapeStatusMessage('Fetching fresh job opportunities based on your preferences...');
+      console.log('[home] scrape started at', scrapeStartedAt);
     }
     fetchJobs();
     fetchStats();
@@ -40,6 +41,7 @@ const Home = () => {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       if (!user.id) {
+        console.log('[home] no user id found for profile');
         setHasPreferences(false);
         return;
       }
@@ -50,6 +52,7 @@ const Home = () => {
       });
 
       if (!response.ok) {
+        console.warn('[home] profile fetch failed:', response.status);
         setHasPreferences(false);
         return;
       }
@@ -59,6 +62,7 @@ const Home = () => {
       const preferences = profile.preferences || {};
       const hasSkills = Array.isArray(skills) && skills.length > 0;
       const hasPrefs = preferences && Object.keys(preferences).length > 0;
+      console.log('[home] preferences loaded', { hasSkills, hasPrefs });
       setHasPreferences(hasSkills || hasPrefs);
     } catch (error) {
       console.warn('Unable to load user profile:', error);
@@ -74,8 +78,10 @@ const Home = () => {
     }
 
     try {
+      console.log('[home] checking supervisor status');
       const response = await axios.get('/api/supervisor/status');
       const lastSearchTime = response.data?.last_search_time;
+      console.log('[home] supervisor status', response.data);
       if (lastSearchTime && new Date(lastSearchTime) >= new Date(scrapeStartedAt)) {
         localStorage.removeItem('scrapeStartedAt');
         setScrapeInProgress(false);
@@ -90,9 +96,11 @@ const Home = () => {
     try {
       setLoading(true);
       setFallbackNotice('');
+      console.log('[home] fetching jobs');
 
       const response = await axios.get('/api/jobs/', { timeout: 5000 });
       if (response.data && response.data.length > 0) {
+        console.log('[home] jobs fetched', response.data.length);
         setJobs(response.data);
         if (scrapeInProgress) {
           localStorage.removeItem('scrapeStartedAt');
@@ -100,6 +108,7 @@ const Home = () => {
           setScrapeStatusMessage('');
         }
       } else {
+        console.log('[home] no jobs returned');
         setJobs([]);
       }
     } catch (error) {
