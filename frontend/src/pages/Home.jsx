@@ -90,7 +90,7 @@ const Home = () => {
 
     try {
       console.log('[home] checking supervisor status');
-      const response = await axios.get('/api/supervisor/status');
+      const response = await axios.get(`${apiBase}/api/supervisor/status`);
       const lastSearchTime = response.data?.last_search_time;
       console.log('[home] supervisor status', response.data);
       if (lastSearchTime && new Date(lastSearchTime) >= new Date(scrapeStartedAt)) {
@@ -109,7 +109,7 @@ const Home = () => {
       setFallbackNotice('');
       console.log('[home] fetching jobs');
 
-      const response = await axios.get('/api/jobs/', { timeout: 5000 });
+      const response = await axios.get(`${apiBase}/api/jobs/?limit=100&offset=0`, { timeout: 5000 });
       if (response.data && response.data.length > 0) {
         console.log('[home] jobs fetched', response.data.length);
         setJobs(response.data);
@@ -137,7 +137,7 @@ const Home = () => {
 
   const fetchStats = async () => {
     try {
-      const response = await axios.get('/api/jobs/stats/summary');
+      const response = await axios.get(`${apiBase}/api/jobs/stats/summary`);
       setStats({
         totalJobs: response.data.total_jobs || 0,
         appliedJobs: 0,
@@ -157,7 +157,7 @@ const Home = () => {
 
     try {
       setLoading(true);
-      const response = await axios.get('/api/jobs/?limit=50&offset=0');
+      const response = await axios.get(`${apiBase}/api/jobs/?limit=100&offset=0`);
       // Filter jobs on frontend since backend doesn't have full-text search yet
       const filteredResults = response.data.filter(job =>
         job.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
