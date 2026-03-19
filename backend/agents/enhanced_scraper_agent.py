@@ -147,6 +147,19 @@ class EnhancedScraperAgent:
         
         # Remove duplicates and limit results
         unique_jobs = self._remove_duplicates(all_jobs)
+
+        # Fallback: if nothing matched, retry without keyword filtering
+        if not unique_jobs and keywords and keywords.lower() not in ["all", "", "any"]:
+            logger.warning("No jobs matched keywords; retrying without keyword filter")
+            fallback_jobs = []
+            for source_name, source_config in enabled_sources.items():
+                try:
+                    jobs = await self._scrape_source(source_name, source_config, "all", location)
+                    fallback_jobs.extend(jobs)
+                except Exception as e:
+                    logger.error(f"Fallback scrape failed for {source_name}: {e}")
+            unique_jobs = self._remove_duplicates(fallback_jobs)
+
         return unique_jobs[:max_results]
     
     async def _scrape_source(self, source_name: str, config: Dict, keywords: str, location: str) -> List[JobListing]:
@@ -169,6 +182,8 @@ class EnhancedScraperAgent:
             if response.status_code == 200:
                 data = response.json()
                 logger.info(f"RemoteOK API response: {len(data)} items")
+            else:
+                logger.warning(f"RemoteOK API returned status {response.status_code}")
                 
                 # Skip the first item which is metadata
                 if isinstance(data, list) and len(data) > 1:
@@ -314,6 +329,8 @@ class EnhancedScraperAgent:
             if response.status_code == 200:
                 data = response.json()
                 logger.info(f"ArbeitNow API response: {len(data.get('data', []))} items")
+            else:
+                logger.warning(f"ArbeitNow API returned status {response.status_code}")
                 
                 if 'data' in data and isinstance(data['data'], list):
                     job_list = data['data']
