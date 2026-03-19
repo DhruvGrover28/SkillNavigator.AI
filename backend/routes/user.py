@@ -13,6 +13,7 @@ import tempfile
 import os
 
 from database.db_connection import get_db, database, User, Job, JobApplication
+from sqlalchemy import func
 from agents.resume_parser_agent import ResumeParserAgent
 from agents.scoring_agent import ScoringAgent
 import logging
@@ -458,7 +459,7 @@ async def register_user(request: Request, db = Depends(get_db)):
         payload, is_form = await _extract_request_data(request)
         register_data = RegisterRequest(
             name=str(payload.get("name", "")).strip(),
-            email=str(payload.get("email", "")).strip(),
+            email=str(payload.get("email", "")).strip().lower(),
             password=str(payload.get("password", "")),
             confirm_password=str(payload.get("confirm_password", "")),
             terms=str(payload.get("terms", "true")).lower() in {"true", "1", "on", "yes"}
@@ -507,7 +508,7 @@ async def register_user(request: Request, db = Depends(get_db)):
             return AuthResponse(success=False, message="Please accept the Terms of Service")
         
         # Check if user already exists
-        existing_user = db.query(User).filter(User.email == register_data.email).first()
+        existing_user = db.query(User).filter(func.lower(User.email) == register_data.email).first()
         if existing_user:
             if is_form:
                 return _render_auth_page(
@@ -574,7 +575,7 @@ async def login_user(request: Request, db = Depends(get_db)):
     """Login user with email and password"""
     try:
         payload, is_form = await _extract_request_data(request)
-        email = str(payload.get("email", "")).strip()
+        email = str(payload.get("email", "")).strip().lower()
         password = str(payload.get("password", ""))
 
         if not email or not password:
@@ -597,7 +598,7 @@ async def login_user(request: Request, db = Depends(get_db)):
                 )
             return AuthResponse(success=False, message="Invalid email address")
 
-        user = db.query(User).filter(User.email == email).first()
+        user = db.query(User).filter(func.lower(User.email) == email).first()
         if not user:
             if is_form:
                 return _render_auth_page(
