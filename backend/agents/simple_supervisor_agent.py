@@ -8,6 +8,7 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import json
+import hashlib
 
 from .enhanced_scraper_agent import EnhancedScraperAgent, JobListing
 from database.db_connection import Database
@@ -197,12 +198,14 @@ class SimpleSupervisorAgent:
                     elif 'justremote.co' in job.url:
                         source = 'justremote'
                 
-                # Generate unique external_id for duplicate prevention
+                # Generate stable external_id for duplicate prevention
                 # Use URL if available, otherwise title+company+source
                 if job.url and len(job.url) > 10:
-                    external_id = f"{source}_{hash(job.url)}"
+                    dedupe_key = job.url
                 else:
-                    external_id = f"{source}_{hash(job.title + job.company + source)}"
+                    dedupe_key = f"{job.title}|{job.company}|{source}"
+                digest = hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest()
+                external_id = f"{source}_{digest}"
                 
                 job_dict = {
                     'title': job.title,

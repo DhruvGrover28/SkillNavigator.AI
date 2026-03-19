@@ -37,6 +37,17 @@ const Home = () => {
     checkScrapeStatus();
   }, []);
 
+  useEffect(() => {
+    if (!scrapeInProgress) return;
+
+    const intervalId = setInterval(() => {
+      checkScrapeStatus();
+      fetchJobs();
+    }, 7000);
+
+    return () => clearInterval(intervalId);
+  }, [scrapeInProgress]);
+
   const fetchUserProfile = async () => {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -102,14 +113,16 @@ const Home = () => {
       if (response.data && response.data.length > 0) {
         console.log('[home] jobs fetched', response.data.length);
         setJobs(response.data);
-        if (scrapeInProgress) {
-          localStorage.removeItem('scrapeStartedAt');
-          setScrapeInProgress(false);
-          setScrapeStatusMessage('');
-        }
       } else {
         console.log('[home] no jobs returned');
         setJobs([]);
+      }
+
+      const scrapeStartedAt = localStorage.getItem('scrapeStartedAt');
+      if (scrapeStartedAt) {
+        localStorage.removeItem('scrapeStartedAt');
+        setScrapeInProgress(false);
+        setScrapeStatusMessage('');
       }
     } catch (error) {
       console.error('Error fetching jobs:', error);

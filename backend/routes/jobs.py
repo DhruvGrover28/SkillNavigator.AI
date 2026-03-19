@@ -110,14 +110,18 @@ async def get_jobs(
             query = query.filter(Job.match_score >= filters['min_score'])
 
         # Adaptive filtering based on user preferences
-        # Only apply adaptive threshold if there are already scored jobs in DB.
-        threshold = _get_adaptive_threshold(db)
+        # Only apply threshold when user preferences exist and there are scored jobs.
+        user_has_prefs = _has_user_preferences(db)
         has_scored = db.query(Job).filter(Job.match_score.isnot(None)).count() > 0
-        if has_scored:
+        if user_has_prefs and has_scored:
+            threshold = _get_adaptive_threshold(db)
             query = query.filter(Job.match_score >= threshold)
-        
-        # Sort by match score in descending order (highest scores first)
-        query = query.order_by(Job.match_score.desc())
+
+        # Sort by match score when available, otherwise fall back to newest jobs
+        if user_has_prefs:
+            query = query.order_by(Job.match_score.desc().nullslast(), Job.scraped_at.desc())
+        else:
+            query = query.order_by(Job.scraped_at.desc())
         
         # Apply pagination
         jobs = query.offset(offset).limit(limit).all()
@@ -853,6 +857,18 @@ def _get_adaptive_threshold(db) -> float:
     except Exception:
         # Default to lower threshold if error
         return 15.0
+
+
+def _has_user_preferences(db) -> bool:
+    """Return True if any user has skills or preferences saved."""
+    try:
+        user = db.query(User).filter(
+            (User.skills.isnot(None)) |
+            (User.preferences.isnot(None))
+        ).first()
+        return bool(user and (user.skills or user.preferences))
+    except Exception:
+        return False
 
 
 # WebSocket endpoint for real-time job updates (would be implemented separately)
