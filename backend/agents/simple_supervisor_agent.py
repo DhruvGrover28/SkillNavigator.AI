@@ -159,6 +159,12 @@ class SimpleSupervisorAgent:
             Dict with search results and metadata
         """
         try:
+            search_params = dict(search_params or {})
+            if "keywords" not in search_params and "query" in search_params:
+                search_params["keywords"] = search_params.get("query")
+            if "max_results" not in search_params and "max_jobs" in search_params:
+                search_params["max_results"] = search_params.get("max_jobs")
+
             logger.info(f"Starting job search with params: {search_params}")
             
             # Create cache key

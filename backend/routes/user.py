@@ -11,7 +11,6 @@ from datetime import datetime
 import json
 import tempfile
 import os
-import sqlite3
 
 from database.db_connection import get_db, database, User, Job, JobApplication
 from agents.resume_parser_agent import ResumeParserAgent
@@ -453,7 +452,7 @@ async def delete_resume(user_id: int, db = Depends(get_db)):
 
 
 @router.post("/register", response_model=AuthResponse)
-async def register_user(request: Request):
+async def register_user(request: Request, db = Depends(get_db)):
     """Register a new user with real database storage"""
     try:
         payload, is_form = await _extract_request_data(request)
@@ -507,87 +506,71 @@ async def register_user(request: Request):
                 )
             return AuthResponse(success=False, message="Please accept the Terms of Service")
         
-        # Connect to database
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
-        try:
-            # Check if user already exists
-            cursor.execute('SELECT id FROM users WHERE email = ?', (register_data.email,))
-            existing_user = cursor.fetchone()
-            
-            if existing_user:
-                if is_form:
-                    return _render_auth_page(
-                        "Create Account",
-                        "User with this email already exists",
-                        {"email": register_data.email, "name": register_data.name},
-                        "/api/user/register"
-                    )
-                return AuthResponse(success=False, message="User with this email already exists")
-            
-            # Hash password
-            password_hash = hash_password(register_data.password)
-            
-            # Create user preferences
-            preferences = {
-                "auto_apply": False,
-                "preferred_locations": ["Remote"],
-                "job_types": ["full-time"],
-                "salary_min": 50000,
-                "max_applications_per_day": 5,
-                "notification_preferences": {
-                    "email_notifications": True,
-                    "application_updates": True
-                }
-            }
-            
-            # Insert new user
-            cursor.execute('''
-                INSERT INTO users (email, name, created_at, updated_at, preferences, password_hash)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                register_data.email,
-                register_data.name,
-                datetime.now().isoformat(),
-                datetime.now().isoformat(),
-                json.dumps(preferences),
-                password_hash
-            ))
-            
-            user_id = cursor.lastrowid
-            conn.commit()
-            
-            # Create authentication token
-            token = create_user_token(user_id, register_data.email)
-            
-            # Return success response
-            user_data = {
-                "id": user_id,
-                "email": register_data.email,
-                "name": register_data.name,
-                "created_at": datetime.now().isoformat()
-            }
-            
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == register_data.email).first()
+        if existing_user:
             if is_form:
                 return _render_auth_page(
-                    "Sign In",
-                    "Account created successfully. Please sign in.",
-                    {"email": register_data.email},
-                    "/api/user/login"
+                    "Create Account",
+                    "User with this email already exists",
+                    {"email": register_data.email, "name": register_data.name},
+                    "/api/user/register"
                 )
+            return AuthResponse(success=False, message="User with this email already exists")
 
-            return AuthResponse(success=True, message="User registered successfully", token=token, user=user_data)
-            
-        finally:
-            conn.close()
+        # Hash password
+        password_hash = hash_password(register_data.password)
+
+        # Create user preferences
+        preferences = {
+            "auto_apply": False,
+            "preferred_locations": ["Remote"],
+            "job_types": ["full-time"],
+            "salary_min": 50000,
+            "max_applications_per_day": 5,
+            "notification_preferences": {
+                "email_notifications": True,
+                "application_updates": True
+            }
+        }
+
+        new_user = User(
+            email=register_data.email,
+            name=register_data.name,
+            password_hash=password_hash
+        )
+        new_user.set_preferences(preferences)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        # Create authentication token
+        token = create_user_token(new_user.id, new_user.email)
+
+        # Return success response
+        user_data = {
+            "id": new_user.id,
+            "email": new_user.email,
+            "name": new_user.name,
+            "created_at": new_user.created_at.isoformat() if new_user.created_at else datetime.utcnow().isoformat()
+        }
+
+        if is_form:
+            return _render_auth_page(
+                "Sign In",
+                "Account created successfully. Please sign in.",
+                {"email": register_data.email},
+                "/api/user/login"
+            )
+
+        return AuthResponse(success=True, message="User registered successfully", token=token, user=user_data)
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login_user(request: Request):
+async def login_user(request: Request, db = Depends(get_db)):
     """Login user with email and password"""
     try:
         payload, is_form = await _extract_request_data(request)
@@ -614,20 +597,20 @@ async def login_user(request: Request):
                 )
             return AuthResponse(success=False, message="Invalid email address")
 
-        # Connect to database
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
-        try:
-            # Find user by email
-            cursor.execute('''
-                SELECT id, email, name, preferences, password_hash
-                FROM users WHERE email = ?
-            ''', (email,))
-            
-            user_record = cursor.fetchone()
-            
-            if not user_record:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            if is_form:
+                return _render_auth_page(
+                    "Sign In",
+                    "Login failed. Please check your email and password.",
+                    {"email": email},
+                    "/api/user/login"
+                )
+            return AuthResponse(success=False, message="Invalid email or password")
+
+        # Check password - handle both new users with hashed passwords and existing users without
+        if user.password_hash:
+            if not verify_password(password, user.password_hash):
                 if is_form:
                     return _render_auth_page(
                         "Sign In",
@@ -636,45 +619,23 @@ async def login_user(request: Request):
                         "/api/user/login"
                     )
                 return AuthResponse(success=False, message="Invalid email or password")
-            
-            user_id, email, name, preferences_str, stored_password_hash = user_record
-            
-            # Check password - handle both new users with hashed passwords and existing users without
-            if stored_password_hash:
-                # New user with proper password hash
-                if not verify_password(password, stored_password_hash):
-                    if is_form:
-                        return _render_auth_page(
-                            "Sign In",
-                            "Login failed. Please check your email and password.",
-                            {"email": email},
-                            "/api/user/login"
-                        )
-                    return AuthResponse(success=False, message="Invalid email or password")
-            else:
-                # Existing user without password hash - accept any password for now
-                # In production, you'd force password reset
-                pass
-            
-            # Create authentication token
-            token = create_user_token(user_id, email)
-            
-            # Return success response
-            user_data = {
-                "id": user_id,
-                "email": email,
-                "name": name
-            }
-            
-            if is_form:
-                response = RedirectResponse(url="/home", status_code=303)
-                response.set_cookie("auth_token", token, httponly=False, samesite="lax")
-                return response
 
-            return AuthResponse(success=True, message="Login successful", token=token, user=user_data)
-            
-        finally:
-            conn.close()
+        # Create authentication token
+        token = create_user_token(user.id, user.email)
+
+        # Return success response
+        user_data = {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name
+        }
+
+        if is_form:
+            response = RedirectResponse(url="/home", status_code=303)
+            response.set_cookie("auth_token", token, httponly=False, samesite="lax")
+            return response
+
+        return AuthResponse(success=True, message="Login successful", token=token, user=user_data)
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")

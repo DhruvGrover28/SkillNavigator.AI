@@ -6,9 +6,10 @@ Endpoints for application tracking and status management
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from database.db_connection import get_db, database
+from database.db_connection import get_db, database, Job, JobApplication
+from sqlalchemy import func
 from agents.tracker_agent import TrackerAgent
 from middleware.auth_middleware import get_user_id
 
@@ -83,57 +84,46 @@ async def get_user_applications(
 ):
     """Get applications for the authenticated user with optional filtering"""
     try:
-        import sqlite3
-        
-        conn = sqlite3.connect('skillnavigator.db')
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        # Build query
-        query = '''
-            SELECT ja.*, j.title as job_title, j.company 
-            FROM job_applications ja
-            LEFT JOIN jobs j ON ja.job_id = j.id
-            WHERE ja.user_id = ?
-        '''
-        params = [user_id]
-        
-        # Add filters
+        query = (
+            db.query(JobApplication, Job)
+            .outerjoin(Job, JobApplication.job_id == Job.id)
+            .filter(JobApplication.user_id == user_id)
+        )
+
         if status:
-            query += ' AND ja.status = ?'
-            params.append(status)
+            query = query.filter(JobApplication.status == status)
         if company:
-            query += ' AND j.company LIKE ?'
-            params.append(f'%{company}%')
+            query = query.filter(Job.company.ilike(f"%{company}%"))
         if days:
-            query += ' AND ja.applied_at >= datetime("now", "-{} days")'.format(days)
-        
-        query += ' ORDER BY ja.applied_at DESC LIMIT ? OFFSET ?'
-        params.extend([limit, offset])
-        
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            query = query.filter(JobApplication.applied_at >= cutoff)
+
+        rows = (
+            query.order_by(JobApplication.applied_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
         applications = []
-        for row in rows:
+        for application, job in rows:
             applications.append(ApplicationResponse(
-                id=row['id'],
-                user_id=row['user_id'],
-                job_id=row['job_id'],
-                job_title=row['job_title'] or 'Unknown',
-                company=row['company'] or 'Unknown',
-                applied_at=datetime.fromisoformat(row['applied_at']),
-                status=row['status'],
-                cover_letter=row['cover_letter'],
-                notes=row['notes'],
-                auto_applied=bool(row['auto_applied']),
-                application_method=row['application_method'],
-                last_updated=datetime.fromisoformat(row['last_updated']),
-                follow_up_date=datetime.fromisoformat(row['follow_up_date']) if row['follow_up_date'] else None,
-                interview_date=datetime.fromisoformat(row['interview_date']) if row['interview_date'] else None
+                id=application.id,
+                user_id=application.user_id,
+                job_id=application.job_id,
+                job_title=(job.title if job else 'Unknown'),
+                company=(job.company if job else 'Unknown'),
+                applied_at=application.applied_at,
+                status=application.status,
+                cover_letter=application.cover_letter,
+                notes=application.notes,
+                auto_applied=bool(application.auto_applied),
+                application_method=application.application_method,
+                last_updated=application.last_updated,
+                follow_up_date=application.follow_up_date,
+                interview_date=application.interview_date
             ))
-        
-        conn.close()
+
         return applications
         
     except Exception as e:
@@ -147,73 +137,71 @@ async def get_application_statistics(
 ):
     """Get application statistics for the authenticated user"""
     try:
-        import sqlite3
-        from datetime import datetime, timedelta
-        
-        conn = sqlite3.connect('skillnavigator.db')
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         week_cutoff = datetime.utcnow() - timedelta(days=7)
-        
-        # Total applications
-        cursor.execute('SELECT COUNT(*) FROM job_applications WHERE user_id = ?', (user_id,))
-        total_applications = cursor.fetchone()[0]
-        
-        # Applications this week
-        cursor.execute('SELECT COUNT(*) FROM job_applications WHERE user_id = ? AND applied_at >= ?', 
-                      (user_id, week_cutoff.isoformat()))
-        applications_this_week = cursor.fetchone()[0]
-        
-        # Status breakdown
-        cursor.execute('SELECT status, COUNT(*) FROM job_applications WHERE user_id = ? GROUP BY status', 
-                      (user_id,))
-        status_breakdown = dict(cursor.fetchall())
-        
-        # Response rate (applications with status != 'applied')
-        cursor.execute('SELECT COUNT(*) FROM job_applications WHERE user_id = ? AND status != "applied"', 
-                      (user_id,))
-        responses = cursor.fetchone()[0]
+
+        total_applications = (
+            db.query(JobApplication)
+            .filter(JobApplication.user_id == user_id)
+            .count()
+        )
+
+        applications_this_week = (
+            db.query(JobApplication)
+            .filter(JobApplication.user_id == user_id, JobApplication.applied_at >= week_cutoff)
+            .count()
+        )
+
+        status_rows = (
+            db.query(JobApplication.status, func.count(JobApplication.id))
+            .filter(JobApplication.user_id == user_id)
+            .group_by(JobApplication.status)
+            .all()
+        )
+        status_breakdown = {status: count for status, count in status_rows}
+
+        responses = (
+            db.query(JobApplication)
+            .filter(JobApplication.user_id == user_id, JobApplication.status != "applied")
+            .count()
+        )
         response_rate = responses / total_applications if total_applications > 0 else 0
-        
-        # Interview rate
-        cursor.execute('SELECT COUNT(*) FROM job_applications WHERE user_id = ? AND status LIKE "%interview%"', 
-                      (user_id,))
-        interviews = cursor.fetchone()[0]
+
+        interviews = (
+            db.query(JobApplication)
+            .filter(JobApplication.user_id == user_id, JobApplication.status.ilike("%interview%"))
+            .count()
+        )
         interview_rate = interviews / total_applications if total_applications > 0 else 0
-        
-        # Success rate (accepted offers)
-        cursor.execute('SELECT COUNT(*) FROM job_applications WHERE user_id = ? AND status LIKE "%accepted%"', 
-                      (user_id,))
-        successes = cursor.fetchone()[0]
+
+        successes = (
+            db.query(JobApplication)
+            .filter(JobApplication.user_id == user_id, JobApplication.status.ilike("%accepted%"))
+            .count()
+        )
         success_rate = successes / total_applications if total_applications > 0 else 0
-        
-        # Top companies
-        cursor.execute('''
-            SELECT j.company, COUNT(*) as count 
-            FROM job_applications ja 
-            JOIN jobs j ON ja.job_id = j.id 
-            WHERE ja.user_id = ? 
-            GROUP BY j.company 
-            ORDER BY count DESC 
-            LIMIT 5
-        ''', (user_id,))
-        top_companies = dict(cursor.fetchall())
-        
-        # Top job titles
-        cursor.execute('''
-            SELECT j.title, COUNT(*) as count 
-            FROM job_applications ja 
-            JOIN jobs j ON ja.job_id = j.id 
-            WHERE ja.user_id = ? 
-            GROUP BY j.title 
-            ORDER BY count DESC 
-            LIMIT 5
-        ''', (user_id,))
-        top_job_titles = dict(cursor.fetchall())
-        
-        conn.close()
+
+        company_rows = (
+            db.query(Job.company, func.count(JobApplication.id))
+            .join(Job, JobApplication.job_id == Job.id)
+            .filter(JobApplication.user_id == user_id)
+            .group_by(Job.company)
+            .order_by(func.count(JobApplication.id).desc())
+            .limit(5)
+            .all()
+        )
+        top_companies = {company: count for company, count in company_rows}
+
+        title_rows = (
+            db.query(Job.title, func.count(JobApplication.id))
+            .join(Job, JobApplication.job_id == Job.id)
+            .filter(JobApplication.user_id == user_id)
+            .group_by(Job.title)
+            .order_by(func.count(JobApplication.id).desc())
+            .limit(5)
+            .all()
+        )
+        top_job_titles = {title: count for title, count in title_rows}
         
         stats = {
             'total_applications': total_applications,
@@ -260,43 +248,21 @@ async def update_application_status(
 ):
     """Update application status"""
     try:
-        import sqlite3
-        
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
-        # First check if the application exists and belongs to the user
-        cursor.execute('SELECT id, status FROM job_applications WHERE id = ? AND user_id = ?', 
-                      (status_update.application_id, user_id))
-        
-        current_app = cursor.fetchone()
-        if not current_app:
-            conn.close()
+        application = (
+            db.query(JobApplication)
+            .filter(JobApplication.id == status_update.application_id, JobApplication.user_id == user_id)
+            .first()
+        )
+        if not application:
             raise HTTPException(status_code=404, detail="Application not found")
-        
-        # Update the application
-        now = datetime.utcnow()
-        update_query = '''
-            UPDATE job_applications 
-            SET status = ?, notes = ?, last_updated = ?
-        '''
-        params = [status_update.status, status_update.notes, now]
-        
+
+        application.status = status_update.status
+        application.notes = status_update.notes
+        application.last_updated = datetime.utcnow()
         if status_update.interview_date:
-            update_query += ', interview_date = ?'
-            params.append(status_update.interview_date)
-        
-        update_query += ' WHERE id = ? AND user_id = ?'
-        params.extend([status_update.application_id, user_id])
-        
-        cursor.execute(update_query, params)
-        
-        if cursor.rowcount == 0:
-            conn.close()
-            raise HTTPException(status_code=400, detail="Failed to update application status")
-        
-        conn.commit()
-        conn.close()
+            application.interview_date = status_update.interview_date
+
+        db.commit()
         
         return {
             "message": "Application status updated successfully",
@@ -360,43 +326,32 @@ async def get_application(
 ):
     """Get specific application by ID (must belong to authenticated user)"""
     try:
-        import sqlite3
-        
-        conn = sqlite3.connect('skillnavigator.db')
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT ja.*, j.title as job_title, j.company 
-            FROM job_applications ja
-            LEFT JOIN jobs j ON ja.job_id = j.id
-            WHERE ja.id = ? AND ja.user_id = ?
-        ''', (application_id, user_id))
-        
-        row = cursor.fetchone()
-        conn.close()
-        
+        row = (
+            db.query(JobApplication, Job)
+            .outerjoin(Job, JobApplication.job_id == Job.id)
+            .filter(JobApplication.id == application_id, JobApplication.user_id == user_id)
+            .first()
+        )
         if not row:
             raise HTTPException(status_code=404, detail="Application not found")
-        
-        application = ApplicationResponse(
-            id=row['id'],
-            user_id=row['user_id'],
-            job_id=row['job_id'],
-            job_title=row['job_title'] or 'Unknown',
-            company=row['company'] or 'Unknown',
-            applied_at=datetime.fromisoformat(row['applied_at']),
-            status=row['status'],
-            cover_letter=row['cover_letter'],
-            notes=row['notes'],
-            auto_applied=bool(row['auto_applied']),
-            application_method=row['application_method'],
-            last_updated=datetime.fromisoformat(row['last_updated']),
-            follow_up_date=datetime.fromisoformat(row['follow_up_date']) if row['follow_up_date'] else None,
-            interview_date=datetime.fromisoformat(row['interview_date']) if row['interview_date'] else None
+
+        application, job = row
+        return ApplicationResponse(
+            id=application.id,
+            user_id=application.user_id,
+            job_id=application.job_id,
+            job_title=(job.title if job else 'Unknown'),
+            company=(job.company if job else 'Unknown'),
+            applied_at=application.applied_at,
+            status=application.status,
+            cover_letter=application.cover_letter,
+            notes=application.notes,
+            auto_applied=bool(application.auto_applied),
+            application_method=application.application_method,
+            last_updated=application.last_updated,
+            follow_up_date=application.follow_up_date,
+            interview_date=application.interview_date
         )
-        
-        return application
         
     except HTTPException:
         raise
@@ -419,39 +374,30 @@ async def create_application(
 ):
     """Create a new application record"""
     try:
-        import sqlite3
-        
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
         now = datetime.utcnow()
-        
-        cursor.execute('''
-            INSERT INTO job_applications (
-                user_id, job_id, applied_at, status, cover_letter, 
-                notes, auto_applied, application_method, last_updated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            user_id, application_data.job_id, now, application_data.status,
-            application_data.cover_letter, application_data.notes, False,
-            application_data.application_method, now
-        ))
-        
-        application_id = cursor.lastrowid
-        conn.commit()
-        
-        # Get the job details
-        cursor.execute('SELECT title, company FROM jobs WHERE id = ?', (application_data.job_id,))
-        job_row = cursor.fetchone()
-        
-        conn.close()
-        
-        return ApplicationResponse(
-            id=application_id,
+        application = JobApplication(
             user_id=user_id,
             job_id=application_data.job_id,
-            job_title=job_row[0] if job_row else 'Unknown',
-            company=job_row[1] if job_row else 'Unknown',
+            applied_at=now,
+            status=application_data.status,
+            cover_letter=application_data.cover_letter,
+            notes=application_data.notes,
+            auto_applied=False,
+            application_method=application_data.application_method,
+            last_updated=now
+        )
+        db.add(application)
+        db.commit()
+        db.refresh(application)
+
+        job = db.query(Job).filter(Job.id == application_data.job_id).first()
+
+        return ApplicationResponse(
+            id=application.id,
+            user_id=user_id,
+            job_id=application_data.job_id,
+            job_title=job.title if job else 'Unknown',
+            company=job.company if job else 'Unknown',
             applied_at=now,
             status=application_data.status,
             cover_letter=application_data.cover_letter,
@@ -474,25 +420,16 @@ async def delete_application(
 ):
     """Delete a specific application (must belong to authenticated user)"""
     try:
-        import sqlite3
-        
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
-        # First check if the application exists and belongs to the user
-        cursor.execute('SELECT id FROM job_applications WHERE id = ? AND user_id = ?', 
-                      (application_id, user_id))
-        
-        if not cursor.fetchone():
-            conn.close()
+        application = (
+            db.query(JobApplication)
+            .filter(JobApplication.id == application_id, JobApplication.user_id == user_id)
+            .first()
+        )
+        if not application:
             raise HTTPException(status_code=404, detail="Application not found")
-        
-        # Delete the application
-        cursor.execute('DELETE FROM job_applications WHERE id = ? AND user_id = ?', 
-                      (application_id, user_id))
-        
-        conn.commit()
-        conn.close()
+
+        db.delete(application)
+        db.commit()
         
         return {
             "message": "Application deleted successfully",
@@ -518,33 +455,24 @@ async def get_application_timeline(
 ):
     """Get application timeline for a user"""
     try:
-        import sqlite3
-        from datetime import datetime, timedelta
-
-        conn = sqlite3.connect('skillnavigator.db')
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         cutoff_date = datetime.utcnow() - timedelta(days=days)
-        cursor.execute('''
-            SELECT ja.id, ja.status, ja.applied_at, j.title AS job_title, j.company
-            FROM job_applications ja
-            LEFT JOIN jobs j ON ja.job_id = j.id
-            WHERE ja.user_id = ? AND ja.applied_at >= ?
-            ORDER BY ja.applied_at DESC
-        ''', (user_id, cutoff_date.isoformat()))
+        rows = (
+            db.query(JobApplication, Job)
+            .outerjoin(Job, JobApplication.job_id == Job.id)
+            .filter(JobApplication.user_id == user_id, JobApplication.applied_at >= cutoff_date)
+            .order_by(JobApplication.applied_at.desc())
+            .all()
+        )
 
         timeline = []
-        for row in cursor.fetchall():
+        for application, job in rows:
             timeline.append({
-                "application_id": row["id"],
-                "status": row["status"],
-                "applied_at": row["applied_at"],
-                "job_title": row["job_title"] or "Unknown",
-                "company": row["company"] or "Unknown"
+                "application_id": application.id,
+                "status": application.status,
+                "applied_at": application.applied_at.isoformat() if application.applied_at else None,
+                "job_title": job.title if job else "Unknown",
+                "company": job.company if job else "Unknown"
             })
-
-        conn.close()
 
         return {
             "user_id": user_id,
@@ -608,37 +536,27 @@ async def get_application_insights(
 ):
     """Get application insights and recommendations"""
     try:
-        import sqlite3
-        from datetime import datetime, timedelta
-
-        conn = sqlite3.connect('skillnavigator.db')
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         cutoff_date = datetime.utcnow() - timedelta(days=days)
-        cursor.execute('''
-            SELECT ja.status, ja.applied_at, j.company
-            FROM job_applications ja
-            LEFT JOIN jobs j ON ja.job_id = j.id
-            WHERE ja.user_id = ? AND ja.applied_at >= ?
-        ''', (user_id, cutoff_date.isoformat()))
+        rows = (
+            db.query(JobApplication, Job)
+            .outerjoin(Job, JobApplication.job_id == Job.id)
+            .filter(JobApplication.user_id == user_id, JobApplication.applied_at >= cutoff_date)
+            .all()
+        )
 
-        rows = cursor.fetchall()
         total_applications = len(rows)
-
-        # Derive simple insights from real data
         status_counts = {}
         company_counts = {}
         weekday_counts = {}
 
-        for row in rows:
-            status = row["status"] or "applied"
+        for application, job in rows:
+            status = application.status or "applied"
             status_counts[status] = status_counts.get(status, 0) + 1
-            company = row["company"] or "Unknown"
+            company = job.company if job else "Unknown"
             company_counts[company] = company_counts.get(company, 0) + 1
-            applied_at = datetime.fromisoformat(row["applied_at"])
-            weekday = applied_at.strftime("%A")
-            weekday_counts[weekday] = weekday_counts.get(weekday, 0) + 1
+            if application.applied_at:
+                weekday = application.applied_at.strftime("%A")
+                weekday_counts[weekday] = weekday_counts.get(weekday, 0) + 1
 
         top_companies = sorted(company_counts.items(), key=lambda item: item[1], reverse=True)[:5]
         best_days = [day for day, _ in sorted(weekday_counts.items(), key=lambda item: item[1], reverse=True)[:2]]
@@ -663,8 +581,6 @@ async def get_application_insights(
                 "status_breakdown": status_counts
             }
         }
-
-        conn.close()
 
         return {
             "user_id": user_id,

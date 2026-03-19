@@ -56,12 +56,14 @@ async def trigger_workflow(
         
         search_params = {
             'query': request.search_query,
+            'keywords': request.search_query,
             'location': request.location or 'Remote',
             'job_type': request.job_type,
             'experience_level': request.experience_level,
             'salary_min': request.salary_min,
             'salary_max': request.salary_max,
             'max_jobs': request.max_jobs or 50,
+            'max_results': request.max_jobs or 50,
             'user_id': 1  # Default user for testing
         }
         

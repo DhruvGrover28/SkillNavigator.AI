@@ -9,6 +9,7 @@ pydantic-settings>=2.0.3
 # Database
 sqlalchemy>=2.0.23
 alembic>=1.12.1
+psycopg2-binary>=2.9.9
 
 # Essential AI packages (compatible versions)
 openai>=1.3.5

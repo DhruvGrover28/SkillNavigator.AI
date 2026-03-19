@@ -5,16 +5,16 @@ Handles automated job applications with real SMTP email sending
 
 import logging
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-import sqlite3
 import json
 import base64
 
 from agents.autoapply_agent import AutoApplyAgent
 from middleware.auth_middleware import get_current_user, get_user_id
+from database.db_connection import get_db, User, Job, JobApplication
 
 logger = logging.getLogger(__name__)
 
@@ -37,48 +37,42 @@ class EmailTestRequest(BaseModel):
     recipient_email: str
 
 
-def get_user_profile(user_id: int = 1) -> Dict:
+def get_user_profile(db, user_id: int = 1) -> Dict:
     """Get user profile with decoded email credentials"""
-    conn = sqlite3.connect('skillnavigator.db')
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('SELECT email, name, preferences, resume_path FROM users WHERE id = ?', (user_id,))
-        user_data = cursor.fetchone()
-        
-        if not user_data:
-            raise HTTPException(status_code=404, detail="User profile not found")
-            
-        email, name, preferences_str, resume_path = user_data
-        preferences = json.loads(preferences_str) if preferences_str else {}
-        
-        # Decode password
-        encoded_password = preferences.get('email_password')
-        if not encoded_password:
-            raise HTTPException(
-                status_code=400, 
-                detail="Email credentials not configured. Please set up SMTP settings."
-            )
-            
-        decoded_password = base64.b64decode(encoded_password.encode()).decode()
-        
-        return {
-            'name': name,
-            'email': email,
-            'resume_path': resume_path,
-            'target_position': 'Software Developer',
-            'phone': '+1-555-0123',
-            'smtp_host': 'smtp.gmail.com',
-            'smtp_port': '587',
-            'email_password': decoded_password
-        }
-        
-    finally:
-        conn.close()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    preferences = user.get_preferences()
+
+    # Decode password
+    encoded_password = preferences.get('email_password')
+    if not encoded_password:
+        raise HTTPException(
+            status_code=400,
+            detail="Email credentials not configured. Please set up SMTP settings."
+        )
+
+    decoded_password = base64.b64decode(encoded_password.encode()).decode()
+
+    return {
+        'name': user.name,
+        'email': user.email,
+        'resume_path': user.resume_path,
+        'target_position': 'Software Developer',
+        'phone': '+1-555-0123',
+        'smtp_host': 'smtp.gmail.com',
+        'smtp_port': '587',
+        'email_password': decoded_password
+    }
 
 
 @router.post("/apply", response_model=AutoApplyResponse)
-async def auto_apply_to_jobs(request: AutoApplyRequest, user_id: int = Depends(get_user_id)):
+async def auto_apply_to_jobs(
+    request: AutoApplyRequest,
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
+):
     """
     Apply to multiple jobs automatically using real email sending
     Requires authentication - user_id extracted from JWT token
@@ -87,7 +81,7 @@ async def auto_apply_to_jobs(request: AutoApplyRequest, user_id: int = Depends(g
         logger.info(f"Starting auto-apply for user {user_id} to {len(request.job_ids)} jobs")
         
         # Get user profile
-        user_profile = get_user_profile(user_id)
+        user_profile = get_user_profile(db, user_id)
         
         # Initialize agent
         agent = AutoApplyAgent()
@@ -114,35 +108,33 @@ async def auto_apply_to_jobs(request: AutoApplyRequest, user_id: int = Depends(g
 
 
 @router.get("/email-jobs")
-async def get_email_jobs():
+async def get_email_jobs(db = Depends(get_db)):
     """
     Get all jobs that can be applied to via email
     """
     try:
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, title, company, apply_url, description, salary_min, salary_max
-            FROM jobs 
-            WHERE apply_url LIKE "mailto:%"
-            ORDER BY id DESC
-            LIMIT 20
-        ''')
-        
         jobs = []
-        for row in cursor.fetchall():
+        results = (
+            db.query(Job)
+            .filter(Job.apply_url.like("mailto:%"))
+            .order_by(Job.id.desc())
+            .limit(20)
+            .all()
+        )
+
+        for job in results:
+            description = job.description
+            if description and len(description) > 200:
+                description = description[:200] + "..."
             jobs.append({
-                'id': row[0],
-                'title': row[1],
-                'company': row[2],
-                'apply_url': row[3],
-                'description': row[4][:200] + "..." if row[4] and len(row[4]) > 200 else row[4],
-                'salary_min': row[5],
-                'salary_max': row[6]
+                'id': job.id,
+                'title': job.title,
+                'company': job.company,
+                'apply_url': job.apply_url,
+                'description': description,
+                'salary_min': job.salary_min,
+                'salary_max': job.salary_max
             })
-        
-        conn.close()
         
         return {
             'success': True,
@@ -156,14 +148,18 @@ async def get_email_jobs():
 
 
 @router.post("/test-email")
-async def test_email_connection(request: EmailTestRequest, user_id: int = Depends(get_user_id)):
+async def test_email_connection(
+    request: EmailTestRequest,
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
+):
     """
     Test email configuration by sending a test email
     Requires authentication - user_id extracted from JWT token
     """
     try:
         # Get user profile
-        user_profile = get_user_profile(user_id)
+        user_profile = get_user_profile(db, user_id)
         
         # Initialize agent
         agent = AutoApplyAgent()
@@ -206,34 +202,29 @@ SkillNavigator Auto-Apply System"""
 
 
 @router.get("/stats")
-async def get_auto_apply_stats():
+async def get_auto_apply_stats(db = Depends(get_db)):
     """
     Get auto-apply statistics
     """
     try:
-        conn = sqlite3.connect('skillnavigator.db')
-        cursor = conn.cursor()
-        
-        # Get total jobs available for email application
-        cursor.execute('SELECT COUNT(*) FROM jobs WHERE apply_url LIKE "mailto:%"')
-        total_email_jobs = cursor.fetchone()[0]
-        
-        # Get application stats from job_applications table if it exists
-        try:
-            cursor.execute('SELECT COUNT(*) FROM job_applications WHERE method = "email"')
-            total_email_applications = cursor.fetchone()[0]
-            
-            cursor.execute('''
-                SELECT COUNT(*) FROM job_applications 
-                WHERE method = "email" AND status = "sent"
-                AND created_at >= date('now', '-7 days')
-            ''')
-            recent_applications = cursor.fetchone()[0]
-        except:
-            total_email_applications = 0
-            recent_applications = 0
-        
-        conn.close()
+        total_email_jobs = db.query(Job).filter(Job.apply_url.like("mailto:%")).count()
+
+        total_email_applications = (
+            db.query(JobApplication)
+            .filter(JobApplication.application_method == "email")
+            .count()
+        )
+
+        recent_cutoff = datetime.utcnow() - timedelta(days=7)
+        recent_applications = (
+            db.query(JobApplication)
+            .filter(
+                JobApplication.application_method == "email",
+                JobApplication.status == "sent",
+                JobApplication.applied_at >= recent_cutoff
+            )
+            .count()
+        )
         
         return {
             'success': True,
@@ -251,14 +242,14 @@ async def get_auto_apply_stats():
 
 
 @router.get("/health")
-async def health_check(user_id: int = Depends(get_user_id)):
+async def health_check(user_id: int = Depends(get_user_id), db = Depends(get_db)):
     """
     Health check for auto-apply system
     Requires authentication - user_id extracted from JWT token
     """
     try:
         # Check if user profile and email are configured
-        user_profile = get_user_profile(user_id)
+        user_profile = get_user_profile(db, user_id)
         
         return {
             'success': True,

@@ -5,6 +5,7 @@ AI-Powered Multi-Agent Job Application Platform
 
 import logging
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from typing import List
 
@@ -15,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
-from database.db_connection import Database
+from database.db_connection import Database, Job
 from agents.simple_supervisor_agent import SimpleSupervisorAgent
 
 # Load environment variables
@@ -58,6 +59,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize supervisor agent: {e}")
         raise
+
+    # Seed the database with jobs if empty to avoid blank home screen
+    try:
+        session = database.get_session()
+        job_count = session.query(Job).count()
+    except Exception:
+        job_count = 0
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+    if supervisor_agent and job_count == 0:
+        logger.info("No jobs found on startup; running initial scrape")
+        asyncio.create_task(
+            supervisor_agent.trigger_job_search({
+                "keywords": "python developer",
+                "location": "Remote",
+                "max_results": 50
+            })
+        )
     
     yield
     
