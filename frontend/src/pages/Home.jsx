@@ -25,6 +25,7 @@ const Home = () => {
   const getEmailAddress = (url) => url.replace(/^mailto:/i, '').split('?')[0];
 
   useEffect(() => {
+    console.log('[home] api base', apiBase);
     const scrapeStartedAt = localStorage.getItem('scrapeStartedAt');
     if (scrapeStartedAt) {
       setScrapeInProgress(true);

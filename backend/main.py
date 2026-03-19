@@ -244,6 +244,19 @@ async def root():
     return HTMLResponse(content=html_content)
 
 
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Serve the React SPA for non-API routes when the build exists."""
+    if full_path.startswith("api") or full_path.startswith("assets"):
+        raise HTTPException(status_code=404)
+
+    spa_index = _spa_index_path()
+    if os.path.exists(spa_index):
+        return FileResponse(spa_index)
+
+    raise HTTPException(status_code=404)
+
+
 def _serve_spa_or_redirect(fallback_redirect: str):
     spa_index = _spa_index_path()
     if os.path.exists(spa_index):

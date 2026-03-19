@@ -109,15 +109,9 @@ async def get_jobs(
         if min_score is not None:
             query = query.filter(Job.match_score >= filters['min_score'])
 
-        # Adaptive filtering based on user preferences
-        # Only apply threshold when user preferences exist and there are scored jobs.
+        # Sort by match score when available, otherwise fall back to newest jobs.
+        # Do not filter by score so all jobs remain visible.
         user_has_prefs = _has_user_preferences(db)
-        has_scored = db.query(Job).filter(Job.match_score.isnot(None)).count() > 0
-        if user_has_prefs and has_scored:
-            threshold = _get_adaptive_threshold(db)
-            query = query.filter(Job.match_score >= threshold)
-
-        # Sort by match score when available, otherwise fall back to newest jobs
         if user_has_prefs:
             query = query.order_by(Job.match_score.desc().nullslast(), Job.scraped_at.desc())
         else:
@@ -128,7 +122,12 @@ async def get_jobs(
         
         # Convert to response format with proper score fields
         job_responses = []
+        seen_keys = set()
         for job in jobs:
+            dedupe_key = (job.external_id or job.apply_url or f"{job.title}|{job.company}").lower()
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
             job_data = {
                 "id": job.id,
                 "title": job.title,
