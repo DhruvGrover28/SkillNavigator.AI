@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import TrackerTable from '../components/TrackerTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { apiBase } from '../utils/api';
 
 const Dashboard = () => {
   const [applications, setApplications] = useState([]);
@@ -22,6 +23,7 @@ const Dashboard = () => {
   const [timeRange, setTimeRange] = useState('30'); // days
 
   useEffect(() => {
+    console.log('[dashboard] api base', apiBase);
     fetchDashboardData();
   }, [timeRange]);
 
@@ -34,7 +36,7 @@ const Dashboard = () => {
       'Content-Type': 'application/json'
     };
     
-    return fetch(`${url}`, {
+    return fetch(`${apiBase}${url}`, {
       ...options,
       headers
     });
@@ -76,7 +78,7 @@ const Dashboard = () => {
       // Fetch job count
       let totalJobs = 0;
       try {
-        const jobsResponse = await fetch('/api/jobs/stats/summary');
+        const jobsResponse = await fetch(`${apiBase}/api/jobs/stats/summary`);
         if (jobsResponse.ok) {
           const jobsData = await jobsResponse.json();
           totalJobs = jobsData.total_jobs || 0;

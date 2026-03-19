@@ -14,6 +14,7 @@ const Home = () => {
   const [scrapeInProgress, setScrapeInProgress] = useState(false);
   const [scrapeStatusMessage, setScrapeStatusMessage] = useState('');
   const [hasPreferences, setHasPreferences] = useState(false);
+  const [initialScrapeTriggered, setInitialScrapeTriggered] = useState(false);
   const [stats, setStats] = useState({
     totalJobs: 0,
     appliedJobs: 0,
@@ -48,6 +49,39 @@ const Home = () => {
 
     return () => clearInterval(intervalId);
   }, [scrapeInProgress]);
+
+  const triggerInitialScrape = async () => {
+    if (initialScrapeTriggered) return;
+
+    try {
+      console.log('[home] triggering initial scrape');
+      const response = await fetch(`${apiBase}/api/supervisor/workflow/trigger`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          search_query: 'python developer',
+          location: 'Remote',
+          job_type: 'full-time',
+          max_jobs: 50
+        })
+      });
+
+      if (response.ok) {
+        localStorage.setItem('scrapeStartedAt', new Date().toISOString());
+        setScrapeInProgress(true);
+        setScrapeStatusMessage('Fetching fresh job opportunities based on your preferences...');
+        setInitialScrapeTriggered(true);
+        console.log('[home] initial scrape started');
+      } else {
+        const errorText = await response.text();
+        console.warn('[home] initial scrape failed:', errorText);
+      }
+    } catch (error) {
+      console.warn('[home] initial scrape error:', error);
+    }
+  };
 
   const fetchUserProfile = async () => {
     try {
@@ -110,13 +144,15 @@ const Home = () => {
       setFallbackNotice('');
       console.log('[home] fetching jobs');
 
-      const response = await axios.get(`${apiBase}/api/jobs/?limit=100&offset=0`, { timeout: 5000 });
+      const url = `${apiBase}/api/jobs/?limit=100&offset=0`;
+      const response = await axios.get(url, { timeout: 8000 });
+      console.log('[home] jobs response', { status: response.status, count: response.data?.length || 0, url });
       if (response.data && response.data.length > 0) {
-        console.log('[home] jobs fetched', response.data.length);
         setJobs(response.data);
       } else {
         console.log('[home] no jobs returned');
         setJobs([]);
+        await triggerInitialScrape();
       }
 
       const scrapeStartedAt = localStorage.getItem('scrapeStartedAt');
@@ -127,6 +163,10 @@ const Home = () => {
       }
     } catch (error) {
       console.error('Error fetching jobs:', error);
+      console.warn('[home] jobs fetch error detail', {
+        status: error?.response?.status,
+        data: error?.response?.data
+      });
       setJobs([]);
       setFallbackNotice('We could not load live job data. Please try again shortly.');
       setScrapeInProgress(false);
