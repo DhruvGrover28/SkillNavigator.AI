@@ -1,6 +1,6 @@
 # 🚀 SkillNavigator - AI-Powered Job Application Platform
 
-**IBM SkillsBuild Project** | An intelligent multi-agent system that revolutionizes job searching through AI-powered automation, smart matching, and seamless application tracking.
+An intelligent multi-agent system that revolutionizes job searching through AI-powered automation, smart matching, and seamless application tracking.
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com)
