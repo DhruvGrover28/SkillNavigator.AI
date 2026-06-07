@@ -179,70 +179,77 @@ class EnhancedScraperAgent:
             url = "https://remoteok.io/api"
             response = self.session.get(url, timeout=10)
             
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"RemoteOK API response: {len(data)} items")
-            else:
+            # Ensure we only attempt to parse JSON when the response is OK
+            if response.status_code != 200:
                 logger.warning(f"RemoteOK API returned status {response.status_code}")
-                
-                # Skip the first item which is metadata
-                if isinstance(data, list) and len(data) > 1:
-                    job_data = data[1:]  # Skip metadata
-                    logger.info(f"Processing {len(job_data)} job entries")
-                    
-                    for job_info in job_data[:50]:  # Limit to 50 jobs for more variety
-                        if not isinstance(job_info, dict):
-                            continue
-                        
-                        # Improved keyword matching - more inclusive
-                        include_job = True
-                        if keywords and keywords.lower() not in ['all', '', 'any']:
-                            # Split keywords to check for multiple terms
-                            keyword_terms = [term.strip().lower() for term in keywords.lower().split()]
-                            
-                            title = job_info.get('position', '').lower()
-                            tags = [str(tag).lower() for tag in job_info.get('tags', [])]
-                            description = job_info.get('description', '').lower()
-                            
-                            # Check if any keyword term matches title, tags, or description
-                            matches = []
-                            for term in keyword_terms:
-                                title_match = term in title
-                                tag_match = any(term in tag for tag in tags)
-                                desc_match = term in description
-                                
-                                if title_match or tag_match or desc_match:
-                                    matches.append(term)
-                            
-                            # Include job if at least one keyword term matches
-                            include_job = len(matches) > 0
-                        
-                        if not include_job:
-                            continue
-                        
-                        # Clean description (remove HTML but keep full content for AI scoring)
-                        description = job_info.get('description', 'Remote position opportunity')
-                        if description:
-                            # Strip HTML tags but preserve full content
-                            import re
-                            description = re.sub(r'<[^>]+>', ' ', description)
-                            description = re.sub(r'\s+', ' ', description).strip()
-                        
-                        # Extract job details
-                        job = JobListing(
-                            title=job_info.get('position', 'Remote Position'),
-                            company=job_info.get('company', 'Remote Company'),
-                            location=job_info.get('location', 'Remote'),
-                            description=description,
-                            url=job_info.get('url', f"https://remoteok.com/remote-jobs/{job_info.get('slug', job_info.get('id', ''))}"),
-                            salary=self._format_salary(job_info.get('salary_min'), job_info.get('salary_max')),
-                            date_posted=job_info.get('date'),
-                            job_type='Remote',
-                            skills=job_info.get('tags', [])[:8],  # Limit skills to 8
-                            apply_url=job_info.get('apply_url') or job_info.get('url', f"https://remoteok.com/remote-jobs/{job_info.get('slug', job_info.get('id', ''))}")
-                        )
-                        jobs.append(job)
-                        
+                return []
+
+            data = response.json()
+
+            # RemoteOK includes a metadata first element; ensure data is a list
+            if not isinstance(data, list) or len(data) <= 1:
+                logger.info("RemoteOK API returned no usable job entries")
+                return []
+
+            logger.info(f"RemoteOK API response: {len(data)} items")
+
+            # Skip the first item which is metadata
+            job_data = data[1:]
+            logger.info(f"Processing {len(job_data)} job entries")
+
+            for job_info in job_data[:50]:  # Limit to 50 jobs for more variety
+                if not isinstance(job_info, dict):
+                    continue
+
+                # Improved keyword matching - more inclusive
+                include_job = True
+                if keywords and keywords.lower() not in ['all', '', 'any']:
+                    # Split keywords to check for multiple terms
+                    keyword_terms = [term.strip().lower() for term in keywords.lower().split()]
+
+                    title = job_info.get('position', '').lower()
+                    tags = [str(tag).lower() for tag in job_info.get('tags', [])]
+                    description = job_info.get('description', '').lower()
+
+                    # Check if any keyword term matches title, tags, or description
+                    matches = []
+                    for term in keyword_terms:
+                        title_match = term in title
+                        tag_match = any(term in tag for tag in tags)
+                        desc_match = term in description
+
+                        if title_match or tag_match or desc_match:
+                            matches.append(term)
+
+                    # Include job if at least one keyword term matches
+                    include_job = len(matches) > 0
+
+                if not include_job:
+                    continue
+
+                # Clean description (remove HTML but keep full content for AI scoring)
+                description = job_info.get('description', 'Remote position opportunity')
+                if description:
+                    # Strip HTML tags but preserve full content
+                    import re
+                    description = re.sub(r'<[^>]+>', ' ', description)
+                    description = re.sub(r'\s+', ' ', description).strip()
+
+                # Extract job details
+                job = JobListing(
+                    title=job_info.get('position', 'Remote Position'),
+                    company=job_info.get('company', 'Remote Company'),
+                    location=job_info.get('location', 'Remote'),
+                    description=description,
+                    url=job_info.get('url', f"https://remoteok.com/remote-jobs/{job_info.get('slug', job_info.get('id', ''))}"),
+                    salary=self._format_salary(job_info.get('salary_min'), job_info.get('salary_max')),
+                    date_posted=job_info.get('date'),
+                    job_type='Remote',
+                    skills=job_info.get('tags', [])[:8],  # Limit skills to 8
+                    apply_url=job_info.get('apply_url') or job_info.get('url', f"https://remoteok.com/remote-jobs/{job_info.get('slug', job_info.get('id', ''))}")
+                )
+                jobs.append(job)
+
             logger.info(f"RemoteOK API returned {len(jobs)} jobs")
             
         except Exception as e:
@@ -325,63 +332,67 @@ class EnhancedScraperAgent:
             
             self._rotate_user_agent()
             response = self.session.get(url, timeout=15, headers={'Accept': 'application/json'})
-            
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"ArbeitNow API response: {len(data.get('data', []))} items")
-            else:
+
+            if response.status_code != 200:
                 logger.warning(f"ArbeitNow API returned status {response.status_code}")
-                
-                if 'data' in data and isinstance(data['data'], list):
-                    job_list = data['data']
-                    
-                    for job_info in job_list[:20]:  # Limit to 20 jobs for variety
-                        if not isinstance(job_info, dict):
-                            continue
-                            
-                        # Improved keyword matching - more inclusive
-                        include_job = True
-                        if keywords and keywords.lower() not in ['all', '', 'any']:
-                            keyword_terms = [term.strip().lower() for term in keywords.lower().split()]
-                            
-                            title = job_info.get('title', '').lower()
-                            description = job_info.get('description', '').lower()
-                            tags = [str(tag).lower() for tag in job_info.get('tags', [])]
-                            
-                            # Check if any keyword term matches
-                            matches = []
-                            for term in keyword_terms:
-                                if (term in title or term in description or 
-                                    any(term in tag for tag in tags)):
-                                    matches.append(term)
-                            
-                            include_job = len(matches) > 0
-                        
-                        if not include_job:
-                            continue
-                        
-                        # Clean HTML from description
-                        description = job_info.get('description', 'Professional opportunity')
-                        if description:
-                            import re
-                            description = re.sub(r'<[^>]+>', ' ', description)
-                            description = re.sub(r'\s+', ' ', description).strip()
-                            # Keep full description for better AI matching
-                        
-                        job = JobListing(
-                            title=job_info.get('title', 'Professional Position'),
-                            company=job_info.get('company_name', 'European Company'),
-                            location=job_info.get('location', 'Remote'),
-                            description=description,
-                            url=job_info.get('url', 'https://www.arbeitnow.com'),
-                            salary=None,  # ArbeitNow doesn't typically include salary in API
-                            date_posted=job_info.get('created_at'),
-                            job_type='Full-time',
-                            skills=job_info.get('tags', [])[:6],  # Limit to 6 tags
-                            apply_url=job_info.get('url', 'https://www.arbeitnow.com')
-                        )
-                        jobs.append(job)
-                        
+                return []
+
+            data = response.json()
+            items = data.get('data') if isinstance(data, dict) else None
+            logger.info(f"ArbeitNow API response: {len(items) if items else 0} items")
+
+            if not items or not isinstance(items, list):
+                return []
+
+            job_list = items
+
+            for job_info in job_list[:20]:  # Limit to 20 jobs for variety
+                if not isinstance(job_info, dict):
+                    continue
+
+                # Improved keyword matching - more inclusive
+                include_job = True
+                if keywords and keywords.lower() not in ['all', '', 'any']:
+                    keyword_terms = [term.strip().lower() for term in keywords.lower().split()]
+
+                    title = job_info.get('title', '').lower()
+                    description = job_info.get('description', '').lower()
+                    tags = [str(tag).lower() for tag in job_info.get('tags', [])]
+
+                    # Check if any keyword term matches
+                    matches = []
+                    for term in keyword_terms:
+                        if (term in title or term in description or 
+                            any(term in tag for tag in tags)):
+                            matches.append(term)
+
+                    include_job = len(matches) > 0
+
+                if not include_job:
+                    continue
+
+                # Clean HTML from description
+                description = job_info.get('description', 'Professional opportunity')
+                if description:
+                    import re
+                    description = re.sub(r'<[^>]+>', ' ', description)
+                    description = re.sub(r'\s+', ' ', description).strip()
+                    # Keep full description for better AI matching
+
+                job = JobListing(
+                    title=job_info.get('title', 'Professional Position'),
+                    company=job_info.get('company_name', 'European Company'),
+                    location=job_info.get('location', 'Remote'),
+                    description=description,
+                    url=job_info.get('url', 'https://www.arbeitnow.com'),
+                    salary=None,  # ArbeitNow doesn't typically include salary in API
+                    date_posted=job_info.get('created_at'),
+                    job_type='Full-time',
+                    skills=job_info.get('tags', [])[:6],  # Limit to 6 tags
+                    apply_url=job_info.get('url', 'https://www.arbeitnow.com')
+                )
+                jobs.append(job)
+
             logger.info(f"ArbeitNow API returned {len(jobs)} jobs")
             
         except Exception as e:

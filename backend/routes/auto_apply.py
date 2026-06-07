@@ -103,6 +103,9 @@ async def auto_apply_to_jobs(
         )
         
     except Exception as e:
+        # Preserve HTTPException statuses raised by helper functions
+        if isinstance(e, HTTPException):
+            raise
         logger.error(f"Auto-apply failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Auto-apply failed: {str(e)}")
 
@@ -143,6 +146,8 @@ async def get_email_jobs(user_id: int = Depends(get_user_id), db = Depends(get_d
         }
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         logger.error(f"Failed to get email jobs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get email jobs: {str(e)}")
 
@@ -197,6 +202,9 @@ SkillNavigator Auto-Apply System"""
             }
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            # Propagate known HTTP exceptions (e.g., 400 when email not configured)
+            raise
         logger.error(f"Email test failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Email test failed: {str(e)}")
 
@@ -237,6 +245,8 @@ async def get_auto_apply_stats(user_id: int = Depends(get_user_id), db = Depends
         }
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         logger.error(f"Failed to get stats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
@@ -260,6 +270,14 @@ async def health_check(user_id: int = Depends(get_user_id), db = Depends(get_db)
         }
         
     except Exception as e:
+        # If it's an HTTPException, return its detail in the response
+        if isinstance(e, HTTPException):
+            return {
+                'success': False,
+                'status': 'unhealthy',
+                'error': getattr(e, 'detail', str(e)),
+                'timestamp': datetime.now().isoformat()
+            }
         return {
             'success': False,
             'status': 'unhealthy',
