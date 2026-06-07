@@ -7,7 +7,7 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, ForeignKey, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.pool import StaticPool
@@ -345,7 +345,7 @@ class Database:
         try:
             db = self.get_session()
             # Simple query to test connection
-            db.execute("SELECT 1")
+            db.execute(text("SELECT 1"))
             db.close()
             return True
         except Exception as e:

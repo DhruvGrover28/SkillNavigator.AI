@@ -269,6 +269,13 @@ async def update_user_preferences(
         user.set_preferences(current_prefs)
         db.commit()
 
+        try:
+            scoring_agent = ScoringAgent()
+            await scoring_agent.initialize()
+            await scoring_agent.rescore_jobs_for_user(user_id)
+        except Exception as scoring_error:
+            logger.warning(f"Preference update saved but rescoring failed: {scoring_error}")
+
         return {
             "message": "Preferences updated successfully",
             "user_id": user_id,
@@ -276,6 +283,8 @@ async def update_user_preferences(
             "timestamp": datetime.utcnow().isoformat()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating preferences: {str(e)}")
 

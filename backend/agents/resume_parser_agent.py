@@ -86,6 +86,8 @@ class ResumeParserAgent:
             
             # Extract basic personal information
             personal_info = self._extract_basic_info(text)
+            experience = self._extract_experience(text)
+            education = self._extract_education(text)
             
             # Create contact_info from extracted personal_info for backward compatibility
             contact_info = {
@@ -104,8 +106,8 @@ class ResumeParserAgent:
                 'parsed_at': datetime.utcnow().isoformat(),
                 'skills': skills,
                 'personal_info': personal_info,
-                'experience': [],  # Placeholder
-                'education': [],   # Placeholder
+                'experience': experience,
+                'education': education,
                 'contact_info': contact_info,  # Now populated with extracted data
                 'raw_text': text[:500] + '...' if len(text) > 500 else text
             }
@@ -271,6 +273,34 @@ class ResumeParserAgent:
                 break
         
         return info
+
+    def _extract_experience(self, text: str) -> List[Dict[str, str]]:
+        """Extract lightweight experience entries from resume text."""
+        experience = []
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for index, line in enumerate(lines):
+            lowered = line.lower()
+            if any(keyword in lowered for keyword in ["experience", "employment", "work history"]):
+                for candidate in lines[index + 1:index + 6]:
+                    if len(candidate) > 4:
+                        experience.append({"summary": candidate})
+                break
+        return experience
+
+    def _extract_education(self, text: str) -> List[Dict[str, str]]:
+        """Extract lightweight education entries from resume text."""
+        education = []
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        degree_keywords = ["bachelor", "master", "associate", "phd", "b.sc", "m.sc", "bs ", "ms "]
+        for index, line in enumerate(lines):
+            lowered = line.lower()
+            if any(keyword in lowered for keyword in ["education", "academic background", "qualifications"]):
+                for candidate in lines[index + 1:index + 6]:
+                    candidate_lower = candidate.lower()
+                    if any(keyword in candidate_lower for keyword in degree_keywords) or len(candidate) > 8:
+                        education.append({"summary": candidate})
+                break
+        return education
 
 
 # Demo/Testing functions

@@ -30,6 +30,7 @@ class SimpleSupervisorAgent:
         self.scoring_agent = ScoringAgent()
         self.is_auto_mode = False
         self.auto_task = None
+        self.initialized = False
         self.last_search_time = None
         self.search_results_cache = {}
         self.max_cache_age = timedelta(hours=1)  # Cache results for 1 hour
@@ -76,6 +77,7 @@ class SimpleSupervisorAgent:
                 raise
             
             logger.info("Simple supervisor agent initialized successfully")
+            self.initialized = True
         except Exception as e:
             logger.error(f"Failed to initialize simple supervisor agent: {e}")
             raise
@@ -92,6 +94,19 @@ class SimpleSupervisorAgent:
             await self.autoapply_agent.cleanup()
         
         logger.info("Simple supervisor agent cleaned up")
+        self.initialized = False
+
+    def is_healthy(self) -> bool:
+        """Return True when agent is initialized and core components are ready."""
+        try:
+            if not self.initialized:
+                return False
+            # Basic checks: scraper and scoring agent should be present
+            if not hasattr(self, 'scraper_agent') or not hasattr(self, 'scoring_agent'):
+                return False
+            return True
+        except Exception:
+            return False
     
     def simple_score_job(self, job_dict: Dict, user_profile: Dict = None) -> float:
         """
@@ -255,17 +270,27 @@ class SimpleSupervisorAgent:
                         await self.database.update_job_match_scores(score_updates)
                         
                         # Auto-apply if score meets threshold and auto-apply is enabled
-                        if (self.auto_apply_enabled and 
-                            score >= self.auto_apply_threshold and 
-                            len(auto_applied_jobs) < self.max_auto_applies_per_day):
+                        for scored_job in scored_jobs:
+                            if len(auto_applied_jobs) >= self.max_auto_applies_per_day:
+                                break
+
+                            if not self.auto_apply_enabled:
+                                break
+
+                            if scored_job['match_score'] < self.auto_apply_threshold:
+                                continue
+
                             try:
                                 if self.autoapply_agent:
-                                    apply_result = await self.autoapply_agent.apply_to_job(job_dict)
+                                    apply_result = await self.autoapply_agent.apply_to_job(scored_job)
                                     if apply_result.get('success'):
-                                        auto_applied_jobs.append(job_dict)
-                                        logger.info(f"Auto-applied to {job_dict['title']} at {job_dict['company']} (score: {score})")
+                                        auto_applied_jobs.append(scored_job)
+                                        logger.info(
+                                            f"Auto-applied to {scored_job['title']} at {scored_job['company']} "
+                                            f"(score: {scored_job['match_score']})"
+                                        )
                             except Exception as e:
-                                logger.error(f"Auto-apply failed for {job_dict['title']}: {e}")
+                                logger.error(f"Auto-apply failed for {scored_job['title']}: {e}")
                     
                     logger.info(f"Scored {len(scored_jobs)} jobs, auto-applied to {len(auto_applied_jobs)} jobs")
                     

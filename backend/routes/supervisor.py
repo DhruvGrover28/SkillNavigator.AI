@@ -3,14 +3,15 @@ Supervisor Agent REST API Routes - Simplified Version
 Provides basic endpoints for supervisor agent management
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
 
 from agents.simple_supervisor_agent import SimpleSupervisorAgent
-from database.db_connection import Database
+from database.db_connection import Database, get_db, SystemLog
+from middleware.auth_middleware import get_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,17 @@ _supervisor_instance = None
 async def get_supervisor() -> SimpleSupervisorAgent:
     global _supervisor_instance
     if _supervisor_instance is None:
+        # Prefer the globally-initialized supervisor from main if available
+        try:
+            import main as main_module
+            global_supervisor = getattr(main_module, 'supervisor_agent', None)
+            if global_supervisor is not None:
+                _supervisor_instance = global_supervisor
+                return _supervisor_instance
+        except Exception:
+            # If import fails or global not set, create a local instance
+            pass
+
         _supervisor_instance = SimpleSupervisorAgent()
         await _supervisor_instance.initialize()
     return _supervisor_instance
@@ -46,7 +58,8 @@ async def get_supervisor() -> SimpleSupervisorAgent:
 @router.post("/workflow/trigger")
 async def trigger_workflow(
     request: WorkflowTriggerRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    user_id: int = Depends(get_user_id)
 ):
     """
     Manually trigger the complete job search workflow
@@ -64,7 +77,7 @@ async def trigger_workflow(
             'salary_max': request.salary_max,
             'max_jobs': request.max_jobs or 50,
             'max_results': request.max_jobs or 50,
-            'user_id': 1  # Default user for testing
+            'user_id': user_id
         }
         
         # Start workflow in background
@@ -82,7 +95,7 @@ async def trigger_workflow(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/status", response_model=SystemStatusResponse)
-async def get_system_status():
+async def get_system_status(user_id: int = Depends(get_user_id)):
     """
     Get basic system status information
     """
@@ -109,7 +122,7 @@ async def get_system_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/auto-mode/start")
-async def start_auto_mode():
+async def start_auto_mode(user_id: int = Depends(get_user_id)):
     """
     Start automated job search mode
     """
@@ -123,7 +136,7 @@ async def start_auto_mode():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/auto-mode/stop")
-async def stop_auto_mode():
+async def stop_auto_mode(user_id: int = Depends(get_user_id)):
     """
     Stop automated job search mode
     """
@@ -137,7 +150,7 @@ async def stop_auto_mode():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/config")
-async def get_configuration():
+async def get_configuration(user_id: int = Depends(get_user_id)):
     """
     Get current supervisor agent configuration
     """
@@ -158,7 +171,7 @@ async def get_configuration():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/agents/health")
-async def get_agents_health():
+async def get_agents_health(user_id: int = Depends(get_user_id)):
     """
     Get health status of all sub-agents
     """
@@ -187,11 +200,36 @@ async def get_workflow_history(days: int = 30):
     Get workflow execution history
     """
     try:
-        return {
-            'success': True,
-            'history': [],
-            'message': 'Workflow history feature coming soon'
-        }
+        db = Database().get_session()
+        try:
+            cutoff = datetime.utcnow().timestamp() - (days * 24 * 3600)
+            history_rows = (
+                db.query(SystemLog)
+                .filter(SystemLog.agent_name == 'supervisor_agent')
+                .order_by(SystemLog.timestamp.desc())
+                .limit(200)
+                .all()
+            )
+
+            history = []
+            for row in history_rows:
+                if row.timestamp and row.timestamp.timestamp() < cutoff:
+                    continue
+                history.append({
+                    'action': row.action,
+                    'message': row.message,
+                    'level': row.level,
+                    'timestamp': row.timestamp.isoformat() if row.timestamp else None,
+                    'metadata': row.get_metadata()
+                })
+
+            return {
+                'success': True,
+                'history': history,
+                'message': 'Workflow history retrieved successfully'
+            }
+        finally:
+            db.close()
         
     except Exception as e:
         logger.error(f"Error getting workflow history: {e}")
@@ -199,7 +237,7 @@ async def get_workflow_history(days: int = 30):
 
 @router.post("/learning/analyze/{user_id}")
 async def analyze_user_outcomes(
-    user_id: int
+    user_id: int = Depends(get_user_id)
 ):
     """
     Analyze user outcomes and apply adaptive learning
@@ -215,7 +253,7 @@ async def analyze_user_outcomes(
 
 @router.post("/learning/tune-threshold/{user_id}")
 async def tune_scoring_threshold(
-    user_id: int
+    user_id: int = Depends(get_user_id)
 ):
     """
     Dynamically tune scoring threshold for user
@@ -232,14 +270,15 @@ async def tune_scoring_threshold(
 @router.post("/schedule/setup/{user_id}")
 async def setup_user_schedule(
     user_id: int,
-    schedule_config: Dict
+    schedule_config: Dict,
+    current_user_id: int = Depends(get_user_id)
 ):
     """
     Setup per-user scheduling configuration
     """
     try:
         supervisor = await get_supervisor()
-        result = await supervisor.setup_user_schedule(user_id, schedule_config)
+        result = await supervisor.setup_user_schedule(current_user_id, schedule_config)
         return result
         
     except Exception as e:
@@ -248,7 +287,7 @@ async def setup_user_schedule(
 
 @router.get("/learning/insights/{user_id}")
 async def get_user_insights(
-    user_id: int
+    user_id: int = Depends(get_user_id)
 ):
     """
     Get personalized insights and recommendations for user

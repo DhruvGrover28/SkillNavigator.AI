@@ -13,7 +13,7 @@ from .enhanced_scraper_agent import EnhancedScraperAgent
 from .job_scoring_agent import JobScoringAgent
 from .autoapply_agent import AutoApplyAgent
 from .tracker_agent import TrackerAgent
-from database.db_connection import Database
+from database.db_connection import Database, User
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +189,18 @@ class SupervisorAgent:
             }
         finally:
             self.workflow_running = False
+
+    def _get_default_user_id(self) -> Optional[int]:
+        """Return the first available user ID, or None if there are no users."""
+        try:
+            db = self.database.get_session()
+            try:
+                user = db.query(User.id).order_by(User.id.asc()).first()
+                return user[0] if user else None
+            finally:
+                db.close()
+        except Exception:
+            return None
     
     async def start_auto_mode(self, user_id: Optional[int] = None) -> Dict:
         """Start automated job search mode"""
@@ -595,9 +607,16 @@ class SupervisorAgent:
         try:
             logger.info("Starting scoring phase")
             
-            # Get default user (for demo purposes)
-            # In production, this would iterate through all users
-            user_id = 1  # Default demo user
+            user_id = self._get_default_user_id()
+            if user_id is None:
+                return {
+                    'success': True,
+                    'jobs_scored': 0,
+                    'high_scoring_jobs': 0,
+                    'scoring_threshold': self.config['scoring_threshold'],
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'message': 'No users available for scoring'
+                }
             
             # Score jobs
             scored_jobs = await self.scoring_agent.score_jobs(user_id)
@@ -632,8 +651,13 @@ class SupervisorAgent:
         try:
             logger.info("Starting auto-apply phase")
             
-            # Get high-scoring jobs for auto-application
-            user_id = 1  # Default demo user
+            user_id = self._get_default_user_id()
+            if user_id is None:
+                return {
+                    'success': True,
+                    'applications_sent': 0,
+                    'message': 'No users available for auto-apply'
+                }
             
             # Get top jobs (placeholder - would get from database)
             top_job_ids = []  # This would be populated from scoring results
@@ -680,9 +704,13 @@ class SupervisorAgent:
         try:
             logger.info("Starting tracking phase")
             
-            # Track applications for all users
-            # For demo, use default user
-            user_id = 1
+            user_id = self._get_default_user_id()
+            if user_id is None:
+                return {
+                    'success': True,
+                    'total_applications': 0,
+                    'message': 'No users available for tracking'
+                }
             
             tracking_result = await self.tracker_agent.track_applications(user_id)
             
@@ -761,10 +789,9 @@ class SupervisorAgent:
     async def _run_scheduled_tracking(self):
         """Run scheduled application tracking"""
         try:
-            # Track applications for all users
-            # For demo, use default user
-            user_id = 1
-            await self.tracker_agent.track_applications(user_id)
+            user_id = self._get_default_user_id()
+            if user_id is not None:
+                await self.tracker_agent.track_applications(user_id)
         except Exception as e:
             logger.error(f"Error in scheduled tracking: {e}")
     

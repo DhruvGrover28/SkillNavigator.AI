@@ -66,6 +66,16 @@ class FollowUpReminderResponse(BaseModel):
     follow_up_type: str
     suggested_action: str
 
+
+class ApplicationNoteRequest(BaseModel):
+    note: str
+
+
+class ApplicationHistoryEvent(BaseModel):
+    status: str
+    timestamp: datetime
+    note: Optional[str] = None
+
 # Dependency to get tracker agent (temporarily disabled)
 # async def get_tracker() -> TrackerAgent:
 #     tracker = TrackerAgent()
@@ -80,7 +90,8 @@ async def get_user_applications(
     status: Optional[str] = None,
     company: Optional[str] = None,
     days: Optional[int] = Query(None, ge=1, le=365),
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Get applications for the authenticated user with optional filtering"""
     try:
@@ -133,11 +144,11 @@ async def get_user_applications(
 @router.get("/applications/stats", response_model=ApplicationStatsResponse)
 async def get_application_statistics(
     days: int = Query(30, ge=1, le=365),
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Get application statistics for the authenticated user"""
     try:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
         week_cutoff = datetime.utcnow() - timedelta(days=7)
 
         total_applications = (
@@ -159,6 +170,12 @@ async def get_application_statistics(
             .all()
         )
         status_breakdown = {status: count for status, count in status_rows}
+
+        recent_status_updates = (
+            db.query(JobApplication)
+            .filter(JobApplication.user_id == user_id, JobApplication.last_updated >= week_cutoff)
+            .all()
+        )
 
         responses = (
             db.query(JobApplication)
@@ -202,6 +219,21 @@ async def get_application_statistics(
             .all()
         )
         top_job_titles = {title: count for title, count in title_rows}
+
+        response_durations = []
+        trend_by_day: Dict[str, int] = {}
+        for application in recent_status_updates:
+            if application.applied_at and application.last_updated:
+                response_durations.append((application.last_updated - application.applied_at).total_seconds() / 86400)
+            if application.applied_at:
+                day_key = application.applied_at.strftime("%Y-%m-%d")
+                trend_by_day[day_key] = trend_by_day.get(day_key, 0) + 1
+
+        avg_response_time = sum(response_durations) / len(response_durations) if response_durations else 0.0
+        application_trend = [
+            {"date": day, "applications": count}
+            for day, count in sorted(trend_by_day.items())
+        ]
         
         stats = {
             'total_applications': total_applications,
@@ -209,11 +241,11 @@ async def get_application_statistics(
             'response_rate': response_rate,
             'interview_rate': interview_rate,
             'success_rate': success_rate,
-            'avg_response_time': 0.0,  # TODO: Calculate based on response dates
+            'avg_response_time': avg_response_time,
             'status_breakdown': status_breakdown,
             'top_companies': top_companies,
             'top_job_titles': top_job_titles,
-            'application_trend': []  # TODO: Calculate trend data
+            'application_trend': application_trend
         }
         
         return ApplicationStatsResponse(**stats)
@@ -224,7 +256,8 @@ async def get_application_statistics(
 
 @router.post("/track")
 async def track_user_applications(
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Trigger application tracking for the authenticated user"""
     try:
@@ -244,7 +277,8 @@ async def track_user_applications(
 @router.put("/status")
 async def update_application_status(
     status_update: StatusUpdateRequest,
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Update application status"""
     try:
@@ -261,6 +295,16 @@ async def update_application_status(
         application.last_updated = datetime.utcnow()
         if status_update.interview_date:
             application.interview_date = status_update.interview_date
+
+        current_notes = application.notes or ""
+        history_entry = {
+            "status": status_update.status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "note": status_update.notes
+        }
+        if current_notes:
+            current_notes = f"{current_notes}\n"
+        application.notes = f"{current_notes}[status-update] {json.dumps(history_entry)}"
 
         db.commit()
         
@@ -280,7 +324,8 @@ async def update_application_status(
 @router.put("/status/bulk")
 async def bulk_update_status(
     bulk_update: BulkStatusUpdateRequest,
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Bulk update application statuses"""
     try:
@@ -307,7 +352,8 @@ async def bulk_update_status(
 
 @router.get("/follow-ups", response_model=List[FollowUpReminderResponse])
 async def get_follow_up_reminders(
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Get follow-up reminders for a user"""
     try:
@@ -322,7 +368,8 @@ async def get_follow_up_reminders(
 @router.get("/application/{application_id}", response_model=ApplicationResponse)
 async def get_application(
     application_id: int,
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Get specific application by ID (must belong to authenticated user)"""
     try:
@@ -370,7 +417,8 @@ class CreateApplicationRequest(BaseModel):
 @router.post("/application", response_model=ApplicationResponse)
 async def create_application(
     application_data: CreateApplicationRequest,
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Create a new application record"""
     try:
@@ -416,7 +464,8 @@ async def create_application(
 @router.delete("/application/{application_id}")
 async def delete_application(
     application_id: int,
-    user_id: int = Depends(get_user_id)
+    user_id: int = Depends(get_user_id),
+    db = Depends(get_db)
 ):
     """Delete a specific application (must belong to authenticated user)"""
     try:
@@ -492,9 +541,19 @@ async def get_status_history(
 ):
     """Get status change history for an application"""
     try:
-        # This would get status history from database
-        # For now, return empty history
+        application = db.query(JobApplication).filter(JobApplication.id == application_id).first()
+        if not application:
+            raise HTTPException(status_code=404, detail="Application not found")
+
         history = []
+        if application.notes:
+            for line in application.notes.splitlines():
+                if line.startswith("[status-update]"):
+                    try:
+                        payload = json.loads(line.replace("[status-update] ", "", 1))
+                        history.append(payload)
+                    except Exception:
+                        continue
         
         return {
             "application_id": application_id,
@@ -509,23 +568,67 @@ async def get_status_history(
 @router.post("/notes/{application_id}")
 async def add_application_note(
     application_id: int,
-    note: str,
+    request: ApplicationNoteRequest,
     db = Depends(get_db)
 ):
     """Add a note to an application"""
     try:
-        # This would add note to database
-        # For now, just return success
+        application = db.query(JobApplication).filter(JobApplication.id == application_id).first()
+        if not application:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        existing_notes = application.notes or ""
+        note_entry = f"[note] {datetime.utcnow().isoformat()} {request.note}"
+        application.notes = f"{existing_notes}\n{note_entry}".strip()
+        application.last_updated = datetime.utcnow()
+        db.commit()
         
         return {
             "message": "Note added successfully",
             "application_id": application_id,
-            "note": note,
+            "note": request.note,
             "timestamp": datetime.utcnow().isoformat()
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding note: {str(e)}")
+
+
+@router.get("/applications/history/{application_id}")
+async def get_application_history(
+    application_id: int,
+    db = Depends(get_db)
+):
+    """Get structured application history for a single application."""
+    try:
+        application = db.query(JobApplication).filter(JobApplication.id == application_id).first()
+        if not application:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        history = []
+        if application.applied_at:
+            history.append({
+                "status": "applied",
+                "timestamp": application.applied_at.isoformat(),
+                "note": "Application created"
+            })
+        if application.last_updated and application.last_updated != application.applied_at:
+            history.append({
+                "status": application.status,
+                "timestamp": application.last_updated.isoformat(),
+                "note": application.notes
+            })
+
+        return {
+            "application_id": application_id,
+            "status_history": history,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting application history: {str(e)}")
 
 
 @router.get("/insights/{user_id}")

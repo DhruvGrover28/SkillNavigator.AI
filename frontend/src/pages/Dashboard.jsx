@@ -20,6 +20,7 @@ const Dashboard = () => {
   const [applications, setApplications] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [timeRange, setTimeRange] = useState('30'); // days
 
   useEffect(() => {
@@ -32,9 +33,12 @@ const Dashboard = () => {
     const token = localStorage.getItem('authToken');
     const headers = {
       ...options.headers,
-      'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
     };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
     
     return fetch(`${apiBase}${url}`, {
       ...options,
@@ -45,6 +49,7 @@ const Dashboard = () => {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
+      setError('');
       
       // Fetch real applications data from tracker API
       const applicationsResponse = await authenticatedFetch(`/api/tracker/applications?days=${timeRange}`);
@@ -113,7 +118,7 @@ const Dashboard = () => {
       
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      // Set empty data on error - no fallback mock data for production
+      setError('Failed to load dashboard data. Please refresh after signing in.');
       setApplications([]);
       setStats({
         totalApplications: 0,
@@ -242,6 +247,11 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {error && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>

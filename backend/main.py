@@ -8,6 +8,7 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 from typing import List
+from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -33,6 +34,27 @@ logger = logging.getLogger(__name__)
 supervisor_agent = None
 
 
+def _validate_production_env():
+    """Validate presence of critical env vars when running in production.
+
+    This helps catch missing secrets early during deploy. It will only
+    raise when APP_ENV=production so local development isn't blocked.
+    """
+    app_env = os.getenv("APP_ENV", "development").lower()
+    if app_env != "production":
+        return
+
+    required = [
+        "DATABASE_URL",
+        "SECRET_KEY",
+        "OPENAI_API_KEY",
+    ]
+
+    missing = [k for k in required if not os.getenv(k)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables for production: {', '.join(missing)}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
@@ -40,6 +62,12 @@ async def lifespan(app: FastAPI):
     
     # Startup
     logger.info("Starting SkillNavigator backend...")
+    # Validate critical env vars in production
+    try:
+        _validate_production_env()
+    except Exception as e:
+        logger.error(f"Environment validation failed: {e}")
+        raise
     
     # Initialize database
     try:
@@ -267,17 +295,8 @@ async def root():
     return HTMLResponse(content=html_content)
 
 
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    """Serve the React SPA for non-API routes when the build exists."""
-    if full_path.startswith("api") or full_path.startswith("assets"):
-        raise HTTPException(status_code=404)
-
-    spa_index = _spa_index_path()
-    if os.path.exists(spa_index):
-        return FileResponse(spa_index)
-
-    raise HTTPException(status_code=404)
+# NOTE: The SPA catch-all route is defined at the end of the file
+# to ensure API routes are registered and matched before it.
 
 
 def _serve_spa_or_redirect(fallback_redirect: str):
@@ -389,15 +408,34 @@ async def health_check():
         # Check database connection
         database = Database()
         db_status = await database.health_check()
-        
-        # Check supervisor agent
-        agent_status = supervisor_agent is not None and supervisor_agent.is_healthy()
-        
+        # Check supervisor agent safely (ensure we create or use the router-managed supervisor)
+        agent_status = False
+        try:
+            # Prefer the supervisor created during application lifespan
+            if supervisor_agent is not None:
+                is_healthy_func = getattr(supervisor_agent, 'is_healthy', None)
+                if callable(is_healthy_func):
+                    agent_status = bool(is_healthy_func())
+
+            # Ensure the router-level supervisor exists and use it if needed
+            if not agent_status:
+                try:
+                    from routes import supervisor as supervisor_routes
+                    # This will create and initialize a supervisor if absent
+                    router_supervisor = await supervisor_routes.get_supervisor()
+                    is_healthy_func = getattr(router_supervisor, 'is_healthy', None)
+                    if callable(is_healthy_func):
+                        agent_status = bool(is_healthy_func())
+                except Exception as e:
+                    logger.warning(f"Failed to obtain router supervisor: {e}")
+        except Exception as e:
+            logger.warning(f"Supervisor health check raised: {e}")
+
         return {
             "status": "healthy" if db_status and agent_status else "unhealthy",
             "database": "connected" if db_status else "disconnected",
             "supervisor_agent": "running" if agent_status else "stopped",
-            "timestamp": "2025-01-01T00:00:00Z"
+            "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -479,6 +517,23 @@ async def internal_error_handler(request, exc):
         status_code=500,
         content={"error": "Internal server error", "detail": str(exc)}
     )
+
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Serve the React SPA for non-API routes when the build exists.
+
+    This catch-all must be registered after all API routes to avoid
+    shadowing API endpoints (e.g. /api/health).
+    """
+    if full_path.startswith("api") or full_path.startswith("assets"):
+        raise HTTPException(status_code=404)
+
+    spa_index = _spa_index_path()
+    if os.path.exists(spa_index):
+        return FileResponse(spa_index)
+
+    raise HTTPException(status_code=404)
 
 
 if __name__ == "__main__":

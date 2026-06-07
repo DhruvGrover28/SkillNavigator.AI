@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 
 from database.db_connection import get_db, database, Job, JobApplication, User
+from middleware.auth_middleware import get_user_id
 from agents.simple_supervisor_agent import SimpleSupervisorAgent
 
 router = APIRouter()
@@ -56,7 +57,7 @@ class ScoredJobResponse(JobResponse):
 
 class BulkApplyRequest(BaseModel):
     job_ids: List[int]
-    user_id: int = 1  # Default user for demo
+    user_id: Optional[int] = None
 
 # Dependency to get supervisor agent
 async def get_supervisor() -> SimpleSupervisorAgent:
@@ -287,7 +288,7 @@ async def score_jobs_for_user(
             "message": "Job scoring completed successfully",
             "user_id": user_id,
             "jobs_scored": len(scored_jobs),
-            "high_scoring_jobs": len([job for job in scored_jobs if job['score'] >= 0.7]),
+            "high_scoring_jobs": len([job for job in scored_jobs if job['score'] >= 70]),
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -435,7 +436,7 @@ async def get_jobs_summary(db = Depends(get_db)):
 
 
 @router.get("/stats/dashboard")
-async def get_dashboard_stats(user_id: int = 1, db = Depends(get_db)):
+async def get_dashboard_stats(user_id: int = Depends(get_user_id), db = Depends(get_db)):
     """Get dashboard statistics including applications"""
     try:
         # Application statistics
@@ -458,11 +459,11 @@ async def get_dashboard_stats(user_id: int = 1, db = Depends(get_db)):
         success_rate = (accepted / total_applications * 100) if total_applications > 0 else 0
         
         # Recent applications (last 7 days)
-        from datetime import date, timedelta
-        week_ago = date.today() - timedelta(days=7)
+        from datetime import timedelta
+        week_ago = datetime.utcnow() - timedelta(days=7)
         recent_applications = db.query(JobApplication).filter(
             JobApplication.user_id == user_id,
-            JobApplication.applied_at >= week_ago.isoformat()
+            JobApplication.applied_at >= week_ago
         ).count()
         
         dashboard_stats = {
@@ -486,8 +487,12 @@ async def get_dashboard_stats(user_id: int = 1, db = Depends(get_db)):
 async def delete_job(job_id: int, db = Depends(get_db)):
     """Delete a specific job"""
     try:
-        # This would delete the job from database
-        # For now, just return success
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        db.delete(job)
+        db.commit()
         
         return {
             "message": f"Job {job_id} deleted successfully",
@@ -503,12 +508,22 @@ async def delete_job(job_id: int, db = Depends(get_db)):
 async def bulk_delete_jobs(job_ids: List[int], db = Depends(get_db)):
     """Delete multiple jobs"""
     try:
-        # This would delete multiple jobs from database
-        # For now, just return success
+        if not job_ids:
+            return {
+                "message": "No jobs provided",
+                "deleted_job_ids": [],
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        jobs = db.query(Job).filter(Job.id.in_(job_ids)).all()
+        deleted_job_ids = [job.id for job in jobs]
+        for job in jobs:
+            db.delete(job)
+        db.commit()
         
         return {
-            "message": f"Deleted {len(job_ids)} jobs successfully",
-            "deleted_job_ids": job_ids,
+            "message": f"Deleted {len(deleted_job_ids)} jobs successfully",
+            "deleted_job_ids": deleted_job_ids,
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -548,9 +563,45 @@ async def get_similar_jobs(
 ):
     """Get jobs similar to a specific job"""
     try:
-        # This would find similar jobs using ML/similarity algorithms
-        # For now, return empty list
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        base_text = " ".join(filter(None, [job.title, job.company, job.location, job.description, job.requirements])).lower()
+        base_tokens = {token for token in base_text.split() if len(token) > 3}
+
+        candidates = (
+            db.query(Job)
+            .filter(Job.id != job_id)
+            .order_by(Job.match_score.desc().nullslast(), Job.scraped_at.desc())
+            .limit(max(20, limit * 4))
+            .all()
+        )
+
+        scored_candidates = []
+        for candidate in candidates:
+            candidate_text = " ".join(filter(None, [candidate.title, candidate.company, candidate.location, candidate.description, candidate.requirements])).lower()
+            similarity_score = sum(1 for token in base_tokens if token in candidate_text)
+            if job.source and candidate.source == job.source:
+                similarity_score += 5
+            if job.job_type and candidate.job_type == job.job_type:
+                similarity_score += 3
+            scored_candidates.append((similarity_score, candidate))
+
+        scored_candidates.sort(key=lambda item: (item[0], item[1].match_score or 0, item[1].scraped_at or datetime.min), reverse=True)
         similar_jobs = []
+        for similarity_score, candidate in scored_candidates[:limit]:
+            similar_jobs.append({
+                "id": candidate.id,
+                "title": candidate.title,
+                "company": candidate.company,
+                "location": candidate.location,
+                "description": candidate.description,
+                "apply_url": candidate.apply_url,
+                "match_score": candidate.match_score,
+                "source": candidate.source,
+                "similarity_score": similarity_score
+            })
         
         return {
             "job_id": job_id,
@@ -595,12 +646,13 @@ async def get_job_apply_info(job_id: int, db = Depends(get_db)):
 
 # Auto-apply settings endpoints (must come before parameterized routes)
 @router.post("/auto-apply/enable")
-async def enable_auto_apply(threshold: float = 80.0, max_per_day: int = 10):
+async def enable_auto_apply(
+    threshold: float = 80.0,
+    max_per_day: int = 10,
+    user_id: int = Depends(get_user_id)
+):
     """Enable automatic job applications for high-scoring jobs"""
     try:
-        # Use default user_id for now - this would come from authentication
-        user_id = 1
-        
         supervisor = await get_supervisor()
         result = await supervisor.configure_auto_apply({
             'enabled': True,
@@ -623,7 +675,7 @@ async def enable_auto_apply(threshold: float = 80.0, max_per_day: int = 10):
 
 
 @router.post("/auto-apply/disable")
-async def disable_auto_apply():
+async def disable_auto_apply(user_id: int = Depends(get_user_id)):
     """Disable automatic job applications"""
     try:
         supervisor = await get_supervisor()
@@ -642,7 +694,7 @@ async def disable_auto_apply():
 
 
 @router.get("/auto-apply/status")
-async def get_auto_apply_status():
+async def get_auto_apply_status(user_id: int = Depends(get_user_id)):
     """Get current auto-apply settings and status"""
     try:
         supervisor = await get_supervisor()
@@ -655,6 +707,7 @@ async def get_auto_apply_status():
 async def trigger_auto_apply(
     job_id: int, 
     db = Depends(get_db),
+    user_id: int = Depends(get_user_id),
     supervisor: SimpleSupervisorAgent = Depends(get_supervisor)
 ):
     """Endpoint to trigger auto-apply for a specific job"""
@@ -665,9 +718,6 @@ async def trigger_auto_apply(
         
         if not job.apply_url:
             raise HTTPException(status_code=400, detail="Job does not have an application URL")
-        
-        # Use default user_id for now - this would come from authentication
-        user_id = 1
         
         # Trigger auto-apply using supervisor
         result = await supervisor.apply_to_job(user_id, job_id)
@@ -702,12 +752,9 @@ async def trigger_auto_apply(
 
 
 @router.post("/auto-apply/check")
-async def trigger_auto_apply_check():
+async def trigger_auto_apply_check(user_id: int = Depends(get_user_id)):
     """Manually trigger auto-apply check for high-scoring jobs"""
     try:
-        # Use default user_id for now - this would come from authentication
-        user_id = 1
-        
         supervisor = await get_supervisor()
         result = await supervisor.check_and_auto_apply(user_id)
         
@@ -723,7 +770,7 @@ async def trigger_auto_apply_check():
 @router.get("/auto-apply/analytics")
 async def get_auto_apply_analytics(
     days: int = Query(30, ge=1, le=365),
-    user_id: int = Query(None, ge=1)
+    user_id: int = Depends(get_user_id)
 ):
     """Get auto-apply analytics and performance metrics"""
     try:

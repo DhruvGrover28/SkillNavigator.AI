@@ -37,7 +37,7 @@ class EmailTestRequest(BaseModel):
     recipient_email: str
 
 
-def get_user_profile(db, user_id: int = 1) -> Dict:
+def get_user_profile(db, user_id: int) -> Dict:
     """Get user profile with decoded email credentials"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -61,8 +61,8 @@ def get_user_profile(db, user_id: int = 1) -> Dict:
         'resume_path': user.resume_path,
         'target_position': 'Software Developer',
         'phone': '+1-555-0123',
-        'smtp_host': 'smtp.gmail.com',
-        'smtp_port': '587',
+        'smtp_host': preferences.get('smtp_host', 'smtp.gmail.com'),
+        'smtp_port': str(preferences.get('smtp_port', '587')),
         'email_password': decoded_password
     }
 
@@ -108,7 +108,7 @@ async def auto_apply_to_jobs(
 
 
 @router.get("/email-jobs")
-async def get_email_jobs(db = Depends(get_db)):
+async def get_email_jobs(user_id: int = Depends(get_user_id), db = Depends(get_db)):
     """
     Get all jobs that can be applied to via email
     """
@@ -202,7 +202,7 @@ SkillNavigator Auto-Apply System"""
 
 
 @router.get("/stats")
-async def get_auto_apply_stats(db = Depends(get_db)):
+async def get_auto_apply_stats(user_id: int = Depends(get_user_id), db = Depends(get_db)):
     """
     Get auto-apply statistics
     """
