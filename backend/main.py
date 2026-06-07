@@ -173,6 +173,13 @@ try:
 except ImportError as e:
     logger.warning(f"Auto-apply router not available: {e}")
 
+try:
+    from routes import jobs_alias
+    app.include_router(jobs_alias.router)
+    logger.info("Jobs alias router loaded successfully")
+except ImportError as e:
+    logger.warning(f"Jobs alias router not available: {e}")
+
 # Serve static files (React/Vite build and public assets)
 try:
     dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
