@@ -9,7 +9,7 @@ An intelligent multi-agent system that revolutionizes job searching through AI-p
 
 ## 🌟 Overview
 
-SkillNavigator is a cutting-edge job application platform that leverages artificial intelligence to automate and optimize the entire job search process. Built as part of the IBM SkillsBuild initiative, it demonstrates advanced AI integration, multi-agent architecture, and modern web technologies.
+SkillNavigator is a cutting-edge job application platform that leverages artificial intelligence to automate and optimize the entire job search process. It demonstrates advanced AI integration, multi-agent architecture, and modern web technologies.
 
 ## 🎯 Key Features
 
@@ -217,17 +217,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 **Acknowledgments**
 
-- 🎓 **IBM SkillsBuild** for providing the learning platform and project opportunity
 - 🤖 **OpenAI** for GPT API integration
 - 🌐 **FastAPI** community for the excellent framework
 - 🧠 **Hugging Face** for sentence transformers
 
 ## 📞 **Support & Contact**
-
-- 📧 **Issues**: [GitHub Issues](https://github.com/DhruvGrover28/IBM-Skillsbuild-Project/issues)
 - 📖 **Documentation**: Check the `/docs` folder for detailed guides
 - 🔧 **Troubleshooting**: Run `python scripts/verify_system.py` for diagnostics
 
 ---
 
-**Built with ❤️ for IBM SkillsBuild | Empowering careers through AI innovation**
